@@ -1,4 +1,4 @@
-/* 
+/*
  * Top level for snestang
  * nand2mario, 2023.6
  */
@@ -32,7 +32,7 @@ module snestang_top (
     output [2:0] tmds_d_n,
 
     // LED
-    output [1:0] led,
+    output [5:0] led,
 
     // MicroSD
     output sd_clk,
@@ -72,6 +72,16 @@ module snestang_top (
     output ds_cs2,
 `endif
 
+`ifdef CONTROLLER_MISTLE
+    // FPGA Companion
+    input mcu_din,
+    output mcu_dout,
+    input mcu_clk,
+    input mcu_ss,
+    output mcu_intn,
+    input mcu_spare,
+`endif
+
     // SDRAM
     output O_sdram_clk,
     output O_sdram_cke,
@@ -81,7 +91,7 @@ module snestang_top (
     output O_sdram_wen_n,           // write enable
     inout [SDRAM_DATA_WIDTH-1:0] IO_sdram_dq,       // 31 bit bidirectional data bus
     output [SDRAM_ROW_WIDTH-1:0] O_sdram_addr,     // 11 bit multiplexed address bus
-    output [SDRAM_DATA_WIDTH/8-1:0] O_sdram_dqm,       // 
+    output [SDRAM_DATA_WIDTH/8-1:0] O_sdram_dqm,       //
     output [1:0] O_sdram_ba         // 4 banks
 );
 
@@ -92,17 +102,20 @@ wire fclk_p;                    // 180-degree shifted fclk
 wire clk27;                     // 27Mhz for hdmi clock generation
 wire hclk5, hclk;               // 720p pixel clock at 74.25Mhz, and 5x high-speed
 
-reg resetn = 1'b0;              // reset is cleared after 4 cycles
 wire pause;
 
 reg [15:0] resetcnt = 16'hffff;
-always @(posedge mclk) begin
-    resetcnt <= resetcnt == 0 ? 0 : resetcnt - 1;
-     if (resetcnt == 0)
-//  if (resetcnt == 0 && s0)   // primer25k, nano20k
-//     if (resetcnt == 0 && ~s0)   // mega138k
-        resetn <= 1'b1;
+
+always @(posedge mclk, posedge s0) begin
+    if (s0) begin
+        resetcnt <= 16'hffff;
+    end else begin
+        resetcnt <= resetcnt == 0 ? 0 : resetcnt - 1;
+    end
 end
+
+wire resetn = (resetcnt == 0);  // reset is cleared after 4 cycles
+wire reset = ~resetn;
 
 `ifdef NANO
 
@@ -134,7 +147,7 @@ reg mclk_buf;                   // 0 0 0 1 1 1
 assign fclk = clk_cnt[0];       // 0 1 0 1 0 1
 assign mclk = mclk_buf;
 always @(posedge sys_clk) begin
-    clk_cnt <= clk_cnt + 3'b1; 
+    clk_cnt <= clk_cnt + 3'b1;
     if (clk_cnt == 3'd5) begin
         clk_cnt <= 0;
         mclk_buf <= 0;
@@ -235,7 +248,7 @@ wire loader_do_valid, loading, header_finished;
 
 reg [22:0] loader_addr = 0;
 
-reg [7:0] dbg_reg, dbg_sel; 
+reg [7:0] dbg_reg, dbg_sel;
 wire [7:0] dbg_dat_out, dbg_dat_in;
 reg dbg_reg_wr = 0;
 reg dbg_break = 0;
@@ -245,16 +258,18 @@ wire [3:0] rom_size, ram_size;
 wire [23:0] rom_mask, ram_mask;
 
 wire sdram_busy;
+wire sdram_refreshing;
+
 wire refresh;
-reg enable; // && ~dbg_break && ~pause;
+wire snes_enable;
+
+reg snes_resetn;
 reg loaded;
 
-always @(posedge mclk) begin        // wait until memory initialize to start SNES
-    if (~sdram_busy && ~pause_snes_for_frame_sync && loaded)
-        enable <= 1;
-    else 
-        enable <= 0;
-end
+always @(posedge mclk)
+    snes_resetn <= resetn && ~loading && ~sdram_busy;
+
+assign snes_enable = loaded && ~pause_snes_for_frame_sync;
 
 wire sysclkf_ce, sysclkr_ce;
 wire overlay;
@@ -277,7 +292,7 @@ parameter USE_GSU=0;
 
 `ifndef DISABLE_SNES
 main #(.USE_DSPn(USE_DSPn), .USE_GSU(USE_GSU)) main (
-    .MCLK(mclk), .RESET_N(resetn & ~loading), .ENABLE(enable), 
+    .MCLK(mclk), .RESET_N(snes_resetn), .ENABLE(snes_enable),
     .SYSCLKF_CE(sysclkf_ce), .SYSCLKR_CE(sysclkr_ce), .REFRESH(refresh),
 
     .ROM_TYPE(rom_type), .ROM_MASK(rom_mask), .RAM_MASK(ram_mask),
@@ -298,22 +313,22 @@ main #(.USE_DSPn(USE_DSPn), .USE_GSU(USE_GSU)) main (
     .VRAM1_WE_N(VRAM1_WE_N), .VRAM2_ADDR(VRAM2_ADDR), .VRAM2_DI(VRAM2_Q),
     .VRAM2_DO(VRAM2_D), .VRAM2_WE_N(VRAM2_WE_N), .VRAM_OE_N(VRAM_OE_N),
 
-    .ARAM_ADDR(ARAM_ADDR), .ARAM_Q(ARAM_Q), .ARAM_D(ARAM_D), 
+    .ARAM_ADDR(ARAM_ADDR), .ARAM_Q(ARAM_Q), .ARAM_D(ARAM_D),
     .ARAM_CE_N(ARAM_CE_N), .ARAM_OE_N(ARAM_OE_N), .ARAM_WE_N(ARAM_WE_N),
 
     .BLEND(BLEND), .PAL(PAL), .HIGH_RES(), .FIELD(), .INTERLACE(), .DIS_SHORTLINE(),
     .DOTCLK(dotclk), .RGB_OUT(rgb_out), .HBLANKn(hblankn),
     .VBLANKn(vblankn), .X_OUT(x_out), .Y_OUT(y_out),
 
-    .JOY1_DI(overlay?2'b11:snes_joy1_di), .JOY2_DI(overlay?2'b11:snes_joy2_di), .JOY_STRB(snes_joy_strb), 
-    .JOY1_CLK(snes_joy1_clk), .JOY2_CLK(snes_joy2_clk), 
+    .JOY1_DI(overlay?2'b11:snes_joy1_di), .JOY2_DI(overlay?2'b11:snes_joy2_di), .JOY_STRB(snes_joy_strb),
+    .JOY1_CLK(snes_joy1_clk), .JOY2_CLK(snes_joy2_clk),
 
     .AUDIO_L(audio_l), .AUDIO_R(audio_r), .AUDIO_READY(audio_ready), .AUDIO_EN(audio_en),
 
     .JOY1_P6(), .JOY2_P6(), .JOY2_P6_in(), .DOT_CLK_CE(DOT_CLK_CE), .EXT_RTC(),
-    .SPC_MODE(), .IO_ADDR(), .IO_DAT(), .IO_WR(), 
+    .SPC_MODE(), .IO_ADDR(), .IO_DAT(), .IO_WR(),
 
-    .DBG_SEL(dbg_sel), .DBG_REG(dbg_reg), .DBG_REG_WR(dbg_reg_wr), .DBG_DAT_IN(dbg_dat_in), 
+    .DBG_SEL(dbg_sel), .DBG_REG(dbg_reg), .DBG_REG_WR(dbg_reg_wr), .DBG_DAT_IN(dbg_dat_in),
     .DBG_DAT_OUT(dbg_dat_out), .DBG_BREAK(dbg_break)
 );
 `endif
@@ -324,9 +339,10 @@ wire [15:0] cpu_port1;
 reg         cpu_port;
 
 reg         cpu_req;
+wire        cpu_req_ack;
 reg  [1:0]  cpu_ds;
 reg [15:0]  cpu_din;
-reg [22:0]  cpu_addr; 
+reg [22:0]  cpu_addr;
 reg         cpu_we;
 
 wire [22:0] rom_addr = loading ? loader_addr : ROM_ADDR[22:0];
@@ -336,6 +352,7 @@ reg [16:0]  wram_addr_sd;
 reg         wram_wr_r, wram_rd_r;
 
 reg         bsram_req, bsram_we;
+wire        bsram_req_ack;
 reg [19:0]  bsram_addr;
 reg [7:0]   bsram_din;
 wire [7:0]  bsram_dout;
@@ -356,9 +373,9 @@ assign      O_sdram_clk = fclk_p;
 always @(posedge mclk) begin
     if (~resetn) begin
     end else begin
-        
+
         // ROM read and load
-        if (loading && loader_do_valid && header_finished && loader_addr[0] 
+        if (loading && loader_do_valid && header_finished && loader_addr[0]
             || ~loading && ~ROM_CE_N && rom_addr_sd != rom_addr) begin
             rom_addr_sd <= rom_addr;
             cpu_addr <= rom_addr;
@@ -368,7 +385,7 @@ always @(posedge mclk) begin
             cpu_ds <= 2'b11;
             cpu_port <= 0;
         end
-        
+
         // WRAM read/write
         wram_rd_r <= wram_rd; wram_wr_r <= wram_wr;
         if ((wram_rd && WRAM_ADDR[16:1] != wram_addr_sd[16:1]) || (wram_rd & ~wram_rd_r) || (wram_wr & ~wram_wr_r)) begin
@@ -377,9 +394,9 @@ always @(posedge mclk) begin
             cpu_addr <= {6'b111_111, WRAM_ADDR[16:0]};  // 7E,7F:0000-FFFF, total 128KB
             cpu_we <= wram_wr;
             cpu_ds <= {WRAM_ADDR[0], ~WRAM_ADDR[0]};
-            cpu_din <= {WRAM_D, WRAM_D};        
+            cpu_din <= {WRAM_D, WRAM_D};
             cpu_port <= 1;
-        end 
+        end
 
         // BSRAM read/write
         bsram_rd_r <= bsram_rd; bsram_wr_r <= bsram_wr;
@@ -422,7 +439,7 @@ reg         rv_new_req;
 
 reg [14:0] vram1_addr_sd, vram2_addr_sd;
 reg vram1_we_n_old, vram2_we_n_old;
-reg vram1_req /* synthesis syn_keep=1 */; 
+reg vram1_req /* synthesis syn_keep=1 */;
 reg vram2_req /* synthesis syn_keep=1 */;
 reg [7:0] vram1_din, vram2_din;
 
@@ -443,50 +460,50 @@ always @(posedge mclk) begin
 end
 
 sdram_snes sdram(
-    .clk(fclk), .mclk(mclk), .clkref(DOT_CLK_CE), .resetn(resetn), .busy(sdram_busy),
+    .clk(fclk), .mclk(mclk), .clkref(DOT_CLK_CE), .resetn(resetn), .busy(sdram_busy), .refreshing(sdram_refreshing),
 
     // SDRAM pins
-    .SDRAM_DQ(IO_sdram_dq), .SDRAM_A(O_sdram_addr), .SDRAM_BA(O_sdram_ba), 
-    .SDRAM_nCS(O_sdram_cs_n), .SDRAM_nWE(O_sdram_wen_n), .SDRAM_nRAS(O_sdram_ras_n), 
-    .SDRAM_nCAS(O_sdram_cas_n), .SDRAM_CKE(O_sdram_cke), .SDRAM_DQM(O_sdram_dqm), 
+    .SDRAM_DQ(IO_sdram_dq), .SDRAM_A(O_sdram_addr), .SDRAM_BA(O_sdram_ba),
+    .SDRAM_nCS(O_sdram_cs_n), .SDRAM_nWE(O_sdram_wen_n), .SDRAM_nRAS(O_sdram_ras_n),
+    .SDRAM_nCAS(O_sdram_cas_n), .SDRAM_CKE(O_sdram_cke), .SDRAM_DQM(O_sdram_dqm),
 
     // CPU accesses
-    .cpu_addr(cpu_addr[22:1]), .cpu_din(cpu_din), .cpu_port(cpu_port), 
-    .cpu_port0(cpu_port0), .cpu_port1(cpu_port1), .cpu_req(cpu_req), .cpu_req_ack(),
+    .cpu_addr(cpu_addr[22:1]), .cpu_din(cpu_din), .cpu_port(cpu_port),
+    .cpu_port0(cpu_port0), .cpu_port1(cpu_port1), .cpu_req(cpu_req), .cpu_req_ack(cpu_req_ack),
     .cpu_we(cpu_we), .cpu_ds(cpu_ds),
 
     // BSRAM accesses
     .bsram_addr(bsram_addr), .bsram_dout(bsram_dout), .bsram_din(bsram_din),
-    .bsram_req(bsram_req), .bsram_req_ack(), .bsram_we(bsram_wr),
+    .bsram_req(bsram_req), .bsram_req_ack(bsram_req_ack), .bsram_we(bsram_wr),
 
     // ARAM accesses
-    .aram_16(aram_16), .aram_addr(ARAM_ADDR), .aram_din({ARAM_D, ARAM_D}), 
+    .aram_16(aram_16), .aram_addr(ARAM_ADDR), .aram_din({ARAM_D, ARAM_D}),
     .aram_dout(aram_dout), .aram_req(aram_req), .aram_req_ack(), .aram_we(aram_wr),
 
 `ifdef SDRAM_3CH
     // VRAM accesses
-    .vram1_addr(vram1_addr_sd), .vram1_req(vram1_req), .vram1_ack(), 
-    .vram1_we(~vram1_we_n_old), .vram1_din(vram1_din), .vram1_dout(VRAM1_Q), 
+    .vram1_addr(vram1_addr_sd), .vram1_req(vram1_req), .vram1_ack(),
+    .vram1_we(~vram1_we_n_old), .vram1_din(vram1_din), .vram1_dout(VRAM1_Q),
     .vram2_addr(vram2_addr_sd), .vram2_req(vram2_req), .vram2_ack(),
     .vram2_we(~vram2_we_n_old),  .vram2_din(vram2_din), .vram2_dout(VRAM2_Q),
 `endif
 
 `ifdef MCU_BL616
-    .rv_addr(), .rv_din(), 
+    .rv_addr(), .rv_din(),
     .rv_ds(), .rv_dout(), .rv_req(), .rv_req_ack(), .rv_we()
 `else
     // IOSys risc-v softcore
-    .rv_addr({rv_addr[22:2], rv_word}), .rv_din(rv_word ? rv_wdata[31:16] : rv_wdata[15:0]), 
+    .rv_addr({rv_addr[22:2], rv_word}), .rv_din(rv_word ? rv_wdata[31:16] : rv_wdata[15:0]),
     .rv_ds(rv_ds), .rv_dout(rv_dout), .rv_req(rv_req), .rv_req_ack(rv_req_ack), .rv_we(rv_wstrb != 0)
 `endif
 );
 
 `ifndef SDRAM_3CH
-// FPGA block RAM for SNES VRAM 
+// FPGA block RAM for SNES VRAM
 vram vram(
-    .clk(mclk), 
-    .vram1_addr(vram1_addr_sd), .vram1_req(vram1_req), .vram1_ack(), 
-    .vram1_we(~vram1_we_n_old), .vram1_din(vram1_din), .vram1_dout(VRAM1_Q), 
+    .clk(mclk),
+    .vram1_addr(vram1_addr_sd), .vram1_req(vram1_req), .vram1_ack(),
+    .vram1_we(~vram1_we_n_old), .vram1_din(vram1_din), .vram1_dout(VRAM1_Q),
     .vram2_addr(vram2_addr_sd), .vram2_req(vram2_req), .vram2_ack(),
     .vram2_we(~vram2_we_n_old),  .vram2_din(vram2_din), .vram2_dout(VRAM2_Q)
 );
@@ -495,7 +512,7 @@ vram vram(
 // Parse 64-byte rom header into rom_type and etc
 smc_parser smc (
     .clk(mclk), .resetn(resetn & ~(loading & ~loading_r)),
-    .rom_d(loader_do), .rom_strb(loader_do_valid), 
+    .rom_d(loader_do), .rom_strb(loader_do_valid),
     .rom_type(rom_type), .rom_mask(rom_mask), .ram_mask(ram_mask),
     .rom_size(rom_size), .ram_size(ram_size),
     .header_finished(header_finished)
@@ -510,7 +527,7 @@ always @(posedge mclk) begin
     end else begin
         loading_r <= loading;
         if (loader_do_valid && header_finished) begin
-            loader_addr <= loader_addr + 23'd1; 
+            loader_addr <= loader_addr + 23'd1;
             loader_do_r <= loader_do;
         end
         if (loading & ~loading_r) begin
@@ -539,21 +556,79 @@ controller_snes joy2_snes (
 `ifdef CONTROLLER_DS2
 controller_ds2 joy1_ds2 (
     .clk(mclk), .snes_buttons(joy1_btns),
-    .ds_clk(ds_clk), .ds_miso(ds_miso), .ds_mosi(ds_mosi), .ds_cs(ds_cs) 
+    .ds_clk(ds_clk), .ds_miso(ds_miso), .ds_mosi(ds_mosi), .ds_cs(ds_cs)
 );
 controller_ds2 joy2_ds2 (
    .clk(mclk), .snes_buttons(joy2_btns),
-   .ds_clk(ds_clk2), .ds_miso(ds_miso2), .ds_mosi(ds_mosi2), .ds_cs(ds_cs2) 
+   .ds_clk(ds_clk2), .ds_miso(ds_miso2), .ds_mosi(ds_mosi2), .ds_cs(ds_cs2)
 );
+`endif
+
+`ifdef CONTROLLER_MISTLE
+wire mcu_hid_strobe;
+wire mcu_start;
+
+wire [7:0] mcu_data_out;
+wire [7:0] hid_data_out;
+
+mcu_spi mcu (
+  .clk(mclk),
+  .reset(reset),
+
+  // SPI interface to FPGA Companion
+  .spi_io_ss (mcu_ss),
+  .spi_io_clk(mcu_clk),
+  .spi_io_din(mcu_din),
+  .spi_io_dout(mcu_dout),
+
+  // byte wide data in/out to the submodules
+  .mcu_sys_strobe(),
+  .mcu_hid_strobe(mcu_hid_strobe),
+  .mcu_osd_strobe(),
+  .mcu_sdc_strobe(),
+  .mcu_start(mcu_start),
+  .mcu_dout(mcu_data_out),
+  .mcu_sys_din(),
+  .mcu_hid_din(hid_data_out),
+  .mcu_osd_din(),
+  .mcu_sdc_din()
+);
+
+assign mcu_intn = 1'b1;
+
+hid hid (
+  .clk(mclk),
+  .reset(reset),
+
+  .data_in_strobe(mcu_hid_strobe),
+  .data_in_start(mcu_start),
+  .data_in(mcu_data_out),
+  .data_out(hid_data_out),
+
+  .db9_port(6'b000000),
+  .irq(),
+  .iack(1'b1),
+
+  .mouse_buttons(),
+
+  .kbd_mouse_level(),
+  .kbd_mouse_type(),
+  .kbd_mouse_data(),
+  .kbd_reset(),
+
+  .joystick0(joy1_btns),
+  .joystick1(joy2_btns)
+);
+
 `endif
 
 // output button presses to SNES
 controller_adapter joy1_adapter (
-    .clk(mclk), .snes_joy_strb(snes_joy_strb), 
+    .clk(mclk), .snes_joy_strb(snes_joy_strb),
     .snes_buttons(joy1_btns | hid1), .snes_joy_clk(snes_joy1_clk), .snes_joy_di(snes_joy1_di[0])
 );
 controller_adapter joy2_adapter (
-    .clk(mclk), .snes_joy_strb(snes_joy_strb), 
+    .clk(mclk), .snes_joy_strb(snes_joy_strb),
     .snes_buttons(joy2_btns | hid2), .snes_joy_clk(snes_joy2_clk), .snes_joy_di(snes_joy2_di[0])
 );
 assign snes_joy1_di[1] = 0;  // P3
@@ -569,9 +644,9 @@ snes2hdmi s2h(
     .clk(mclk), .resetn(resetn), .snes_refresh(refresh),
     .pause_snes_for_frame_sync(pause_snes_for_frame_sync),
     .dotclk(dotclk), .hblank(~hblankn),.vblank(~vblankn),.rgb5(rgb_out),
-    .xs(x_out), .ys(y_out), 
+    .xs(x_out), .ys(y_out),
     .overlay(overlay), .overlay_x(overlay_x), .overlay_y(overlay_y),
-    .overlay_color(overlay_color), 
+    .overlay_color(overlay_color),
     .audio_l(audio_l), .audio_r(audio_r), .audio_ready(audio_ready), .audio_en(audio_en),
     .clk_pixel(hclk),.clk_5x_pixel(hclk5),.locked(1'b1),
     .tmds_clk_n(tmds_clk_n), .tmds_clk_p(tmds_clk_p),
@@ -589,7 +664,7 @@ iosys_bl616 #(.CORE_ID(2), .FREQ(21_484_000)) iosys (
     .rom_loading(loading), .rom_do(loader_do), .rom_do_valid(loader_do_valid)
 );
 
-`else       
+`else
 
 // IOSys for menu, rom loading...
 iosys_picorv32 #(.CORE_ID(2)) iosys (        // CORE ID 2: SNESTang
@@ -599,7 +674,7 @@ iosys_picorv32 #(.CORE_ID(2)) iosys (        // CORE ID 2: SNESTang
     .overlay_color(overlay_color),
     .joy1(joy1_btns), .joy2(joy2_btns),
 
-    .rom_loading(loading), .rom_do(loader_do), .rom_do_valid(loader_do_valid), 
+    .rom_loading(loading), .rom_do(loader_do), .rom_do_valid(loader_do_valid),
     .ram_busy(sdram_busy),
 
     .rv_valid(rv_valid), .rv_ready(rv_ready), .rv_addr(rv_addr),
@@ -670,8 +745,8 @@ always @(posedge mclk) begin            // RV
             rv_dout0 <= rv_dout;
             rvst <= RV_WAIT1;
         end
-            
-        RV_WAIT1: 
+
+        RV_WAIT1:
             if (rv_req == rv_req_ack) begin
                 if (write)  begin
                     rv_ready <= 1;
@@ -735,7 +810,7 @@ always @(posedge mclk) begin    // halt SNES during snes dram refresh on line 2
                 end else begin
                     test_halt_snes <= 0;
                     test_sync_done <= 1;
-                end                            
+                end
             end
         end else if (y_out[7:0] == 8'd200)
             test_sync_done <= 0;
@@ -752,8 +827,15 @@ reg [19:0] timer;           // 21 times per second
 
 reg [9:0] status;
 //assign led = s0 == 1'b0 ? ~status[9:5] : ~status[4:0];        // s0==0 when pressed, for mega138k
-assign led = UART_TXD;
+//assign led = {UART_TXD, s0};
 //assign led = joy1_btns[1:0];        // Y and B
+
+assign led[0] = ~loaded;
+assign led[1] = ~loading;
+assign led[2] = ~sdram_refreshing;
+assign led[3] = ~(rv_req ^ rv_req_ack);
+assign led[4] = ~(cpu_req ^ cpu_req_ack);
+assign led[5] = ~(bsram_req ^ bsram_req_ack);
 
 always @(posedge mclk) begin
     if (loading && ~loading_r)
@@ -764,7 +846,7 @@ always @(posedge mclk) begin
         23'h00_00A1: status[2] <= 1;        // Clear_WRAM
         23'h00_0645: status[3] <= 1;        // Main
         23'h00_0111: status[4] <= 1;        // DMA_Palette
-        
+
         23'h00_06AB: status[5] <= 1;        // Draw_Map
         23'h00_072A: status[6] <= 1;        // Init_Music
         23'h00_075F: status[7] <= 1;        // Infinite_loop

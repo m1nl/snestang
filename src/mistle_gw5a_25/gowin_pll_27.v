@@ -1,0 +1,1 @@
+../primer25k/gowin_pll_27.v

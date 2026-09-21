@@ -60,7 +60,6 @@ if {$dev eq "nano20k"} {
     add_file -type verilog "src/mistle_gw5a_25/sdram_cl2_3ch.v"
     add_file -type verilog "src/mistle/mcu_spi.v"
     add_file -type verilog "src/mistle/hid.v"
-    add_file -type sdc "src/mistle_gw5a_25/mcu.sdc"
     set_option -output_base_name snestang_${dev}
 } elseif {$dev eq "mega60k"} {
     set_device GW5AT-LV60PG484AC1/I0 -device_version B
@@ -176,7 +175,7 @@ add_file -type verilog "src/ppuhoam.v"
 add_file -type verilog "src/ppuoam.v"
 add_file -type verilog "src/smc_parser.v"
 add_file -type verilog "src/smp.v"
-add_file -type verilog "src/snes.v"
+add_file -type verilog "src/SNES.v"
 add_file -type verilog "src/controller_adapter.sv"
 add_file -type verilog "src/controller_ds2.sv"
 add_file -type verilog "src/controller_snes.v"

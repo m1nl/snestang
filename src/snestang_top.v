@@ -159,6 +159,14 @@ end
 `else
 // Mega 138K: mclk=21.5054, fclk=64.5161
 // Primer 25K: mclk=21.4844, fclk=85.9375
+`ifdef MEGA
+localparam SNES_FREQ = 21_505_400;
+localparam PIXEL_FREQ = 74_250_000;
+`else
+localparam SNES_FREQ = 21_484_400;
+localparam PIXEL_FREQ = 74_250_000;
+`endif
+
 gowin_pll_snes pll_snes (
     .clkout0(mclk),             // 21.4844
     .clkout1(fclk),
@@ -173,10 +181,12 @@ gowin_pll_27 pll_27 (
 );
 gowin_pll_hdmi pll_hdmi (
     .clkin(clk27),              // 27 Mhz input
-    .clkout0(hclk5), .clkout1(hclk)
+    .clkout0(hclk5),
+    .clkout1(hclk)
 );
-
 `endif
+
+wire DOT_CLK_CE;
 
 wire [23:0] ROM_ADDR;
 wire ROM_CE_N, ROM_OE_N, ROM_WE_N, ROM_WORD;
@@ -366,7 +376,6 @@ reg [15:0]  aram_addr_sd;
 reg         aram_rd_r, aram_wr_r;
 reg         aram_req;
 
-wire        DOT_CLK_CE;
 assign      O_sdram_clk = fclk_p;
 
 // Generate SDRAM signals
@@ -509,6 +518,9 @@ vram vram(
 );
 `endif
 
+reg [7:0] loader_do_r;
+reg loading_r;
+
 // Parse 64-byte rom header into rom_type and etc
 smc_parser smc (
     .clk(mclk), .resetn(resetn & ~(loading & ~loading_r)),
@@ -518,8 +530,6 @@ smc_parser smc (
     .header_finished(header_finished)
 );
 
-reg [7:0] loader_do_r;
-reg loading_r;
 always @(posedge mclk) begin
     if (~resetn) begin
         loading_r <= 0;
@@ -640,7 +650,7 @@ wire [7:0] overlay_y;
 
 wire [7:0] dbg_dat_out_loader;
 
-snes2hdmi s2h(
+snes2hdmi #(.SNES_FREQ(SNES_FREQ), .PIXEL_FREQ(PIXEL_FREQ)) s2h (
     .clk(mclk), .resetn(resetn), .snes_refresh(refresh),
     .pause_snes_for_frame_sync(pause_snes_for_frame_sync),
     .dotclk(dotclk), .hblank(~hblankn),.vblank(~vblankn),.rgb5(rgb_out),
@@ -655,7 +665,7 @@ snes2hdmi s2h(
 
 `ifdef MCU_BL616
 
-iosys_bl616 #(.CORE_ID(2), .FREQ(21_484_000)) iosys (
+iosys_bl616 #(.CORE_ID(2), .FREQ(SNES_FREQ)) iosys (
     .clk(mclk), .hclk(hclk), .resetn(resetn),
     .overlay(overlay), .overlay_x(overlay_x), .overlay_y(overlay_y),
     .overlay_color(overlay_color),

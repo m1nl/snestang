@@ -9,6 +9,10 @@ create_generated_clock -name mclk -source [get_nets {fclk}] -divide_by 4 [get_ne
 create_clock -name hclk5 -period 2.694 -waveform {0 1.347} [get_nets {hclk5}]
 create_generated_clock -name hclk -source [get_nets {hclk5}] -master_clock hclk5 -divide_by 5 [get_nets {hclk}]
 
+create_clock -name clk_audio -period 20833 -waveform {0 10416} [get_nets {s2h/clk_audio}]
+
+create_clock -name mcu_clk -period 50 -waveform {0 25} [get_ports {mcu_clk}] -add
+
 // see start of sdram_snes.v for detailed timing of sdram
 // SNES to sdram, 3*fclk
 set_multicycle_path 3 -setup -end -from [get_clocks {mclk}] -to [get_clocks {fclk}]
@@ -27,3 +31,10 @@ set_multicycle_path 2 -hold -start -from [get_clocks {fclk}] -to [get_clocks {mc
 // false paths
 //set_false_path -from [get_regs {main/SNES/smp/CPUO*}] -to [get_regs {sdram/dq_out*}]
 
+// The hdmi audio sample words cross from the 48kHz audio clock into the pixel
+// clock domain through a toggle handshake: the data is written a full audio
+// period (~10us) before the synchronized toggle releases the capture, so the
+// single cycle relationship the analyzer assumes here is meaningless. Left
+// unconstrained the path is only met by lucky placement, and when it is not
+// the captured sample words pick up wrong bits - audible as noisy samples.
+set_false_path -from [get_regs {*packet_picker/audio_sample_word_transfer*}] -to [get_regs {*packet_picker/audio_sample_word_buffer*}]

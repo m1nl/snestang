@@ -111,7 +111,8 @@ wire spiflash_reg_wait;
 always @(posedge clk) begin
     if (~resetn) begin
         flash_loaded <= 0;
-        flash_addr = {21{1'b1}};
+        flash_loading <= 0;
+        flash_addr <= {21{1'b1}};
     end else begin
         flash_start <= 0;
         flash_wr <= 0;

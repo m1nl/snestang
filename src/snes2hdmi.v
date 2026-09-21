@@ -274,7 +274,7 @@ module snes2hdmi (
             else
                 rgb <= {mem_portB_rdata[4:0], 3'b0, mem_portB_rdata[9:5], 3'b0, mem_portB_rdata[14:10], 3'b0};                
         end else
-            rgb <= 24'h303030;
+            rgb <= 24'h000000;
     end
 
     // HDMI output.

@@ -1211,7 +1211,7 @@ begin
 
 				when GS_BRR3 =>
 					SUM3   := resize( shift_right(GTBL_DO * BRR_BUF_GAUSS_DO, 11), 17 );
-					GSUM := CLAMP16(SUM012 + SUM3);
+					GSUM := CLAMP16( resize(SUM012(15)&SUM012(15 downto 0) + SUM3, 17) );
 
 					if TNON(to_integer(G_VOICE)) = '0' then
 						OUT_TEMP := GSUM and x"FFFE";

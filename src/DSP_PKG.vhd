@@ -197,45 +197,35 @@ package DSP_PKG is
 		VS_ECHO
 	);
 	
-	type VoiceStep_r is record
-		S        : VoiceStep_t;
-		V        : integer range 0 to 7;
-	end record;
-	
-	type VoiceStepTbl_t is array(0 to 31, 0 to 3) of VoiceStep_r;
-	constant VS_TBL: VoiceStepTbl_t := (
-	((VS_VOLR,0),  (VS_PITCHL,1), (VS_ADSR1,1), (VS_IDLE,0)),
-	((VS_IDLE,0),  (VS_PITCHH,1), (VS_ADSR2,1), (VS_IDLE,0)),
-	((VS_OUTX,0),  (VS_VOLL,1),   (VS_SRCN,3),  (VS_IDLE,0)),
-	((VS_VOLR,1),  (VS_PITCHL,2), (VS_ADSR1,2), (VS_IDLE,0)),
-	((VS_ENVX,0),  (VS_PITCHH,2), (VS_ADSR2,2), (VS_IDLE,0)),
-	((VS_OUTX,1),  (VS_VOLL,2),   (VS_SRCN,4),  (VS_IDLE,0)),
-	((VS_VOLR,2),  (VS_PITCHL,3), (VS_ADSR1,3), (VS_IDLE,0)),
-	((VS_ENVX,1),  (VS_PITCHH,3), (VS_ADSR2,3), (VS_IDLE,0)),
-	((VS_OUTX,2),  (VS_VOLL,3),   (VS_SRCN,5),  (VS_IDLE,0)),
-	((VS_VOLR,3),  (VS_PITCHL,4), (VS_ADSR1,4), (VS_IDLE,0)),
-	((VS_ENVX,2),  (VS_PITCHH,4), (VS_ADSR2,4), (VS_IDLE,0)),
-	((VS_OUTX,3),  (VS_VOLL,4),   (VS_SRCN,6),  (VS_IDLE,0)),
-	((VS_VOLR,4),  (VS_PITCHL,5), (VS_ADSR1,5), (VS_IDLE,0)),
-	((VS_ENVX,3),  (VS_PITCHH,5), (VS_ADSR2,5), (VS_IDLE,0)),
-	((VS_OUTX,4),  (VS_VOLL,5),   (VS_SRCN,7),  (VS_IDLE,0)),
-	((VS_VOLR,5),  (VS_PITCHL,6), (VS_ADSR1,6), (VS_IDLE,0)),
-	((VS_ENVX,4),  (VS_PITCHH,6), (VS_ADSR2,6), (VS_IDLE,0)),--
-	((VS_OUTX,5),  (VS_VOLL,6),   (VS_SRCN,0),  (VS_IDLE,0)),
-	((VS_VOLR,6),  (VS_PITCHL,7), (VS_ADSR1,7), (VS_IDLE,0)),
-	((VS_ENVX,5),  (VS_PITCHH,7), (VS_ADSR2,7), (VS_IDLE,0)),
-	((VS_OUTX,6),  (VS_VOLL,7),   (VS_SRCN,1),  (VS_IDLE,0)),
-	((VS_VOLR,7),  (VS_PITCHL,0), (VS_ADSR1,0), (VS_IDLE,0)),
-	((VS_ENVX,6),  (VS_PITCHH,0), (VS_FIR0,0),  (VS_IDLE,0)),
-	((VS_OUTX,7),  (VS_FIR1,1),   (VS_FIR2,2),  (VS_IDLE,0)),
-	((VS_FIR3,3),  (VS_FIR4,4),   (VS_FIR5,5),  (VS_IDLE,0)),
-	((VS_ENVX,7),  (VS_FIR6,6),   (VS_FIR7,7),  (VS_IDLE,0)),
-	((VS_MVOLL,0), (VS_EVOLL,0),  (VS_EFB,0),   (VS_IDLE,0)),
-	((VS_MVOLR,0), (VS_EVOLR,0),  (VS_PMON,0),  (VS_IDLE,0)),
-	((VS_NON,0),   (VS_EON,0),    (VS_DIR,0),   (VS_IDLE,0)),
-	((VS_EDL,0),   (VS_ESA,0),    (VS_KON,0),   (VS_IDLE,0)),
-	((VS_KOFF,0),  (VS_FLG,0),    (VS_ADSR2,0), (VS_IDLE,0)),
-	((VS_ECHO,0),  (VS_VOLL,0),   (VS_SRCN,2),  (VS_IDLE,0))
+	-- Keep the control step and its voice index in independent ROMs.  Gowin
+	-- EDA does not reliably synthesize arrays whose element type is a record.
+	type VoiceStepTbl_t is array(0 to 31, 0 to 3) of VoiceStep_t;
+	type VoiceTbl_t is array(0 to 31, 0 to 3) of integer range 0 to 7;
+	constant VS_S_TBL: VoiceStepTbl_t := (
+	(VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE), (VS_IDLE, VS_PITCHH, VS_ADSR2, VS_IDLE),
+	(VS_OUTX, VS_VOLL, VS_SRCN, VS_IDLE), (VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE),
+	(VS_ENVX, VS_PITCHH, VS_ADSR2, VS_IDLE), (VS_OUTX, VS_VOLL, VS_SRCN, VS_IDLE),
+	(VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE), (VS_ENVX, VS_PITCHH, VS_ADSR2, VS_IDLE),
+	(VS_OUTX, VS_VOLL, VS_SRCN, VS_IDLE), (VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE),
+	(VS_ENVX, VS_PITCHH, VS_ADSR2, VS_IDLE), (VS_OUTX, VS_VOLL, VS_SRCN, VS_IDLE),
+	(VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE), (VS_ENVX, VS_PITCHH, VS_ADSR2, VS_IDLE),
+	(VS_OUTX, VS_VOLL, VS_SRCN, VS_IDLE), (VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE),
+	(VS_ENVX, VS_PITCHH, VS_ADSR2, VS_IDLE), (VS_OUTX, VS_VOLL, VS_SRCN, VS_IDLE),
+	(VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE), (VS_ENVX, VS_PITCHH, VS_ADSR2, VS_IDLE),
+	(VS_OUTX, VS_VOLL, VS_SRCN, VS_IDLE), (VS_VOLR, VS_PITCHL, VS_ADSR1, VS_IDLE),
+	(VS_ENVX, VS_PITCHH, VS_FIR0, VS_IDLE), (VS_OUTX, VS_FIR1, VS_FIR2, VS_IDLE),
+	(VS_FIR3, VS_FIR4, VS_FIR5, VS_IDLE), (VS_ENVX, VS_FIR6, VS_FIR7, VS_IDLE),
+	(VS_MVOLL, VS_EVOLL, VS_EFB, VS_IDLE), (VS_MVOLR, VS_EVOLR, VS_PMON, VS_IDLE),
+	(VS_NON, VS_EON, VS_DIR, VS_IDLE), (VS_EDL, VS_ESA, VS_KON, VS_IDLE),
+	(VS_KOFF, VS_FLG, VS_ADSR2, VS_IDLE), (VS_ECHO, VS_VOLL, VS_SRCN, VS_IDLE)
+	);
+	constant VS_V_TBL: VoiceTbl_t := (
+	(0,1,1,0), (0,1,1,0), (0,1,3,0), (1,2,2,0), (0,2,2,0), (1,2,4,0),
+	(2,3,3,0), (1,3,3,0), (2,3,5,0), (3,4,4,0), (2,4,4,0), (3,4,6,0),
+	(4,5,5,0), (3,5,5,0), (4,5,7,0), (5,6,6,0), (4,6,6,0), (5,6,0,0),
+	(6,7,7,0), (5,7,7,0), (6,7,1,0), (7,0,0,0), (6,0,0,0), (7,1,2,0),
+	(3,4,5,0), (7,6,7,0), (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0),
+	(0,0,0,0), (0,0,2,0)
 	);
 
 	
@@ -305,45 +295,33 @@ package DSP_PKG is
 		BDS_SMPL3
 	);
 	
-	type BRRDecodeStep_r is record
-		S        : BRRDecodeStep_t;
-		V        : integer range 0 to 7;
-	end record;
-
-	type BRRDecodeStepTbl_t is array(0 to 31, 0 to 3) of BRRDecodeStep_r;
-	constant BDS_TBL: BRRDecodeStepTbl_t := (
-	((BDS_SMPL2,0), (BDS_SMPL3,0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,1), (BDS_SMPL1,1)),
-	((BDS_SMPL2,1), (BDS_SMPL3,1), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,2), (BDS_SMPL1,2)),
-	((BDS_SMPL2,2), (BDS_SMPL3,2), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,3), (BDS_SMPL1,3)),
-	((BDS_SMPL2,3), (BDS_SMPL3,3), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,4), (BDS_SMPL1,4)),
-	((BDS_SMPL2,4), (BDS_SMPL3,4), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,5), (BDS_SMPL1,5)),
-	((BDS_SMPL2,5), (BDS_SMPL3,5), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,6), (BDS_SMPL1,6)),
-	((BDS_SMPL2,6), (BDS_SMPL3,6), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,7), (BDS_SMPL1,7)),
-	((BDS_SMPL2,7), (BDS_SMPL3,7), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_IDLE, 0)),
-	((BDS_IDLE, 0), (BDS_IDLE, 0), (BDS_SMPL0,0), (BDS_SMPL1,0))
+	type BRRDecodeStepTbl_t is array(0 to 31, 0 to 3) of BRRDecodeStep_t;
+	type BRRDecodeVoiceTbl_t is array(0 to 31, 0 to 3) of integer range 0 to 7;
+	constant BDS_S_TBL: BRRDecodeStepTbl_t := (
+	(BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1), (BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1),
+	(BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1), (BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1),
+	(BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1), (BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1),
+	(BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1), (BDS_SMPL2, BDS_SMPL3, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE),
+	(BDS_IDLE, BDS_IDLE, BDS_IDLE, BDS_IDLE), (BDS_IDLE, BDS_IDLE, BDS_SMPL0, BDS_SMPL1)
+	);
+	constant BDS_V_TBL: BRRDecodeVoiceTbl_t := (
+	(0,0,0,0), (0,0,0,0), (0,0,1,1), (1,1,0,0), (0,0,0,0), (0,0,2,2),
+	(2,2,0,0), (0,0,0,0), (0,0,3,3), (3,3,0,0), (0,0,0,0), (0,0,4,4),
+	(4,4,0,0), (0,0,0,0), (0,0,5,5), (5,5,0,0), (0,0,0,0), (0,0,6,6),
+	(6,6,0,0), (0,0,0,0), (0,0,7,7), (7,7,0,0), (0,0,0,0), (0,0,0,0),
+	(0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0),
+	(0,0,0,0), (0,0,0,0)
 	);
 	
 	--RAM Access
@@ -353,45 +331,33 @@ package DSP_PKG is
 		IS_ENV2
 	);
 	
-	type IntStep_r is record
-		S        : IntStep_t;
-		V        : integer range 0 to 7;
-	end record;
-	
-	type IntStepTbl_t is array(0 to 31, 0 to 3) of IntStep_r;
-	constant IS_TBL: IntStepTbl_t := (
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 1),    (IS_ENV,  1),    (IS_ENV2, 1)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 2),    (IS_ENV,  2),    (IS_ENV2, 2)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 3),    (IS_ENV,  3),    (IS_ENV2, 3)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 4),    (IS_ENV,  4),    (IS_ENV2, 4)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 5),    (IS_ENV,  5),    (IS_ENV2, 5)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 6),    (IS_ENV,  6),    (IS_ENV2, 6)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 7),    (IS_ENV,  7),    (IS_ENV2, 7)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_ENV,  0),    (IS_ENV2, 0)),
-	((IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0),    (IS_IDLE, 0))
+	type IntStepTbl_t is array(0 to 31, 0 to 3) of IntStep_t;
+	type IntVoiceTbl_t is array(0 to 31, 0 to 3) of integer range 0 to 7;
+	constant IS_S_TBL: IntStepTbl_t := (
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE),
+	(IS_IDLE, IS_IDLE, IS_ENV, IS_ENV2), (IS_IDLE, IS_IDLE, IS_IDLE, IS_IDLE)
+	);
+	constant IS_V_TBL: IntVoiceTbl_t := (
+	(0,0,0,0), (0,1,1,1), (0,0,0,0), (0,0,0,0), (0,2,2,2), (0,0,0,0),
+	(0,0,0,0), (0,3,3,3), (0,0,0,0), (0,0,0,0), (0,4,4,4), (0,0,0,0),
+	(0,0,0,0), (0,5,5,5), (0,0,0,0), (0,0,0,0), (0,6,6,6), (0,0,0,0),
+	(0,0,0,0), (0,7,7,7), (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0),
+	(0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0),
+	(0,0,0,0), (0,0,0,0)
 	);
 
 	type GaussStep_t is (

@@ -73,10 +73,13 @@ architecture rtl of DSP is
 	signal STEP 			: integer range 0 to 31;
 	signal SUBSTEP 		: integer range 0 to 3;
 	signal BRR_VOICE 		: integer range 0 to 7;
-	signal VS 				: VoiceStep_r;
+	signal VS_S 				: VoiceStep_t;
+	signal VS_V 				: integer range 0 to 7;
 	signal RS 				: RamStep_t;
-	signal BDS 				: BRRDecodeStep_r;
-	signal INS 				: IntStep_r;
+	signal BDS_S 				: BRRDecodeStep_t;
+	signal BDS_V 				: integer range 0 to 7;
+	signal INS_S 				: IntStep_t;
+	signal INS_V 				: integer range 0 to 7;
 	
 	signal RST_FLG 		: std_logic;
 	signal MUTE_FLG 		: std_logic;
@@ -236,6 +239,8 @@ architecture rtl of DSP is
 	signal SS_REGS_WR		: std_logic;
 	signal SS_REGS_DO		: std_logic_vector(7 downto 0);
 
+	signal BRR_BUF_DO_TEMP 		: std_logic_vector(15 downto 0);
+	signal BRR_BUF_GAUSS_DO_TEMP 		: std_logic_vector(15 downto 0);
 begin
 	
 	MCLK_FREQ <= MCLK_PAL_FREQ when PAL = '1' else MCLK_NTSC_FREQ;
@@ -366,11 +371,14 @@ begin
 		end if;
 	end process;
 	
-	VS <= VS_TBL(STEP,SUBSTEP);
+	VS_S <= VS_S_TBL(STEP,SUBSTEP);
+	VS_V <= VS_V_TBL(STEP,SUBSTEP);
 	RS <= RS_TBL(STEP,SUBSTEP);
 	BRR_VOICE <= BRR_VOICE_TBL(STEP);
-	BDS <= BDS_TBL(STEP,SUBSTEP);
-	INS <= IS_TBL(STEP,SUBSTEP);
+	BDS_S <= BDS_S_TBL(STEP,SUBSTEP);
+	BDS_V <= BDS_V_TBL(STEP,SUBSTEP);
+	INS_S <= IS_S_TBL(STEP,SUBSTEP);
+	INS_V <= IS_V_TBL(STEP,SUBSTEP);
 
 	process(CLK)
 	begin
@@ -597,9 +605,12 @@ begin
 		wren_b		=> '0',
 		data_a		=> std_logic_vector(BRR_BUF_DI),
 		data_b		=> (others => '0'),
-		signed(q_a)		=> BRR_BUF_DO,
-		signed(q_b)		=> BRR_BUF_GAUSS_DO
+		q_a		=> BRR_BUF_DO_TEMP,
+		q_b		=> BRR_BUF_GAUSS_DO_TEMP
 	);
+
+	BRR_BUF_DO <= signed(BRR_BUF_DO_TEMP);
+	BRR_BUF_GAUSS_DO <= signed(BRR_BUF_GAUSS_DO_TEMP);
 
 	process(CLK, RST_N)
 		variable FILTER : std_logic_vector(1 downto 0);
@@ -634,11 +645,11 @@ begin
 					when others => null;
 				end case;
 			elsif ENABLE = '1' and CE = '1' then
-				if BDS.S /= BDS_IDLE and BRR_DECODE_EN = '1' then
+				if BDS_S /= BDS_IDLE and BRR_DECODE_EN = '1' then
 					FILTER := TBRRHDR(3 downto 2);
 					SCALE := unsigned(TBRRHDR(7 downto 4));
 										
-					case BDS.S is
+					case BDS_S is
 						when BDS_SMPL0 =>
 							S := (15 downto 3 => TBRRDAT(15), 2 => TBRRDAT(14), 1 => TBRRDAT(13), 0 => TBRRDAT(12));
 						when BDS_SMPL1 =>
@@ -655,9 +666,9 @@ begin
 					else
 						SR <= signed(S and x"F800");
 					end if;
-					BD_VOICE <= to_unsigned(BDS.V, 3);
-					BRR_BUF_ADDR_A(6 downto 4) <= std_logic_vector(to_unsigned(BDS.V, 3));
-					BRR_BUF_ADDR_A(3 downto 0) <= std_logic_vector(BRR_BUF_ADDR(BDS.V));
+					BD_VOICE <= to_unsigned(BDS_V, 3);
+					BRR_BUF_ADDR_A(6 downto 4) <= std_logic_vector(to_unsigned(BDS_V, 3));
+					BRR_BUF_ADDR_A(3 downto 0) <= std_logic_vector(BRR_BUF_ADDR(BDS_V));
 					BD_STATE <= BD_WAIT;
 				end if;
 			end if;
@@ -953,68 +964,68 @@ begin
 					end if;
 				end if;
 				
-				NEW_KON_CNT := KON_CNT(INS.V) - 1;	
-				case INS.S is
+				NEW_KON_CNT := KON_CNT(INS_V) - 1;
+				case INS_S is
 					when IS_ENV =>
-						LAST_ENV <= ENV(INS.V);
+						LAST_ENV <= ENV(INS_V);
 
-						if KON_CNT(INS.V) /= 0 then
-							if KON_CNT(INS.V) = 5 then
-								BRR_ADDR(INS.V) <= BRR_NEXT_ADDR;
-								BRR_OFFS(INS.V) <= (others => '0');
+						if KON_CNT(INS_V) /= 0 then
+							if KON_CNT(INS_V) = 5 then
+								BRR_ADDR(INS_V) <= BRR_NEXT_ADDR;
+								BRR_OFFS(INS_V) <= (others => '0');
 							end if;
 									
-							INTERP_POS(INS.V) <= (others => '0');
+							INTERP_POS(INS_V) <= (others => '0');
 							if NEW_KON_CNT(1 downto 0) /= "00" then
-								INTERP_POS(INS.V) <= x"4000";
+								INTERP_POS(INS_V) <= x"4000";
 							end if;
 
-							ENV(INS.V) <= (others => '0');
+							ENV(INS_V) <= (others => '0');
 							LAST_ENV <= (others => '0');
 							TPITCH <= (others => '0');
 						else
-							if TPMON(INS.V) = '1' then
+							if TPMON(INS_V) = '1' then
 								TPITCH <= unsigned(signed(TPITCH) + resize(shift_right(shift_right(TOUT, 5) * signed(TPITCH), 10), TPITCH'length));
 							end if;
 						end if;
 						
-						if RST_FLG = '1' or (TBRRHDR(1 downto 0) = "01" and KON_CNT(INS.V) /= 5) then
-							ENV_MODE(INS.V) <= EM_RELEASE;
-							ENV(INS.V) <= (others => '0');
+						if RST_FLG = '1' or (TBRRHDR(1 downto 0) = "01" and KON_CNT(INS_V) /= 5) then
+							ENV_MODE(INS_V) <= EM_RELEASE;
+							ENV(INS_V) <= (others => '0');
 						end if;
 						
-						if EVEN_SAMPLE = '1' and TKON(INS.V) = '1' then
-							KON_CNT(INS.V) <= "101";
-						elsif KON_CNT(INS.V) /= 0 then
-							KON_CNT(INS.V) <= NEW_KON_CNT;
+						if EVEN_SAMPLE = '1' and TKON(INS_V) = '1' then
+							KON_CNT(INS_V) <= "101";
+						elsif KON_CNT(INS_V) /= 0 then
+							KON_CNT(INS_V) <= NEW_KON_CNT;
 						end if;
 						
 						if EVEN_SAMPLE = '1' then
-							if TKON(INS.V) = '1' then
-								ENV_MODE(INS.V) <= EM_ATTACK;
-							elsif TKOFF(INS.V) = '1' then
-								ENV_MODE(INS.V) <= EM_RELEASE;
+							if TKON(INS_V) = '1' then
+								ENV_MODE(INS_V) <= EM_ATTACK;
+							elsif TKOFF(INS_V) = '1' then
+								ENV_MODE(INS_V) <= EM_RELEASE;
 							end if;
 						end if;
 						
-						TENVX(INS.V) <= "0" & std_logic_vector(ENV(INS.V)(10 downto 4));
+						TENVX(INS_V) <= "0" & std_logic_vector(ENV(INS_V)(10 downto 4));
 						
 					when IS_ENV2 =>
-						BB_POS := "0" & unsigned(INTERP_POS(INS.V)(14 downto 12));
-						BB_POS0 := '0' & BB_POS + BRR_BUF_ADDR(INS.V) + 1;
+						BB_POS := "0" & unsigned(INTERP_POS(INS_V)(14 downto 12));
+						BB_POS0 := '0' & BB_POS + BRR_BUF_ADDR(INS_V) + 1;
 						if BB_POS0 > 11 then BB_POS0 := BB_POS0 - 12; end if;
-						GTBL_ADDR <= '0' & not (INTERP_POS(INS.V)(11 downto 4));
-						G_VOICE <= to_unsigned(INS.V, 3);
-						BRR_BUF_ADDR_B(6 downto 4) <= std_logic_vector(to_unsigned(INS.V, 3));
+						GTBL_ADDR <= '0' & not (INTERP_POS(INS_V)(11 downto 4));
+						G_VOICE <= to_unsigned(INS_V, 3);
+						BRR_BUF_ADDR_B(6 downto 4) <= std_logic_vector(to_unsigned(INS_V, 3));
 						BRR_BUF_ADDR_B(3 downto 0) <= std_logic_vector(BB_POS0(3 downto 0));
 						GS_STATE <= GS_WAIT;
 					when others => null;
 				end case;
-				case VS.S is
+				case VS_S is
 					when VS_ADSR1 =>
 						TADSR1 <= REGS_DO;
 						
-						if VS.V = 0 then
+						if VS_V = 0 then
 							ECHO_ADDR <= (unsigned(TESA) & x"00") + ECHO_POS;
 						end if;
 						
@@ -1035,42 +1046,42 @@ begin
 					when VS_VOLL =>
 						VOL_TEMP := resize(shift_right(TOUT * signed(REGS_DO), 7), VOL_TEMP'length);
 						MOUT(0) <= CLAMP16(resize(MOUT(0), VOL_TEMP'length) + VOL_TEMP);
-						if TEON(VS.V) = '1' then
+						if TEON(VS_V) = '1' then
 							EOUT(0) <= CLAMP16(resize(EOUT(0), VOL_TEMP'length) + VOL_TEMP);
 						end if;
 						
 						BRR_END <= (others => '0');
 						BRR_DECODE_EN <= '0';
-						if INTERP_POS(VS.V)(15 downto 14) /= "00" then -- >= 4000
+						if INTERP_POS(VS_V)(15 downto 14) /= "00" then -- >= 4000
 							BRR_DECODE_EN <= '1';
-							BRR_OFFS(VS.V) <= BRR_OFFS(VS.V) + 2;
-							if BRR_OFFS(VS.V) = 6 then
+							BRR_OFFS(VS_V) <= BRR_OFFS(VS_V) + 2;
+							if BRR_OFFS(VS_V) = 6 then
 								if TBRRHDR(0) = '1' then
-									BRR_ADDR(VS.V) <= BRR_NEXT_ADDR;
-									BRR_END(VS.V) <= '1';
+									BRR_ADDR(VS_V) <= BRR_NEXT_ADDR;
+									BRR_END(VS_V) <= '1';
 								else
-									BRR_ADDR(VS.V) <= std_logic_vector(unsigned(BRR_ADDR(VS.V)) + 9);
+									BRR_ADDR(VS_V) <= std_logic_vector(unsigned(BRR_ADDR(VS_V)) + 9);
 								end if;
 							end if;
 						end if;
 						
-						NEW_INTERP_POS := ("00"&INTERP_POS(VS.V)(13 downto 0)) + ("0"&TPITCH);
+						NEW_INTERP_POS := ("00"&INTERP_POS(VS_V)(13 downto 0)) + ("0"&TPITCH);
 						if NEW_INTERP_POS(15) = '0' then
-							INTERP_POS(VS.V) <= NEW_INTERP_POS;
+							INTERP_POS(VS_V) <= NEW_INTERP_POS;
 						else
-							INTERP_POS(VS.V) <= x"7FFF";
+							INTERP_POS(VS_V) <= x"7FFF";
 						end if;
 						
 					when VS_VOLR =>
 						VOL_TEMP := resize(shift_right(TOUT * signed(REGS_DO), 7), VOL_TEMP'length);
 						MOUT(1) <= CLAMP16(resize(MOUT(1), VOL_TEMP'length) + VOL_TEMP);
-						if TEON(VS.V) = '1' then
+						if TEON(VS_V) = '1' then
 							EOUT(1) <= CLAMP16(resize(EOUT(1), VOL_TEMP'length) + VOL_TEMP);
 						end if;
 						
 						ENDX_BUF <= ENDX or BRR_END;
-						if KON_CNT(VS.V) = 5 then
-							ENDX_BUF(VS.V) <= '0';
+						if KON_CNT(VS_V) = 5 then
+							ENDX_BUF(VS_V) <= '0';
 						end if;
 					
 					when VS_MVOLL =>
@@ -1148,7 +1159,7 @@ begin
 						ECHO_WR_EN <= not ECEN_FLG;
 					
 					when VS_FIR0 | VS_FIR1 | VS_FIR2 | VS_FIR3 | VS_FIR4 | VS_FIR5 | VS_FIR6 | VS_FIR7 =>
-						ECHO_FFC(VS.V) <= signed(REGS_DO);
+						ECHO_FFC(VS_V) <= signed(REGS_DO);
 								
 					when VS_EFB =>
 						EOUT(0) <= CLAMP16(resize(EOUT(0), 17) + resize(shift_right(ECHO_FIR(0) * signed(REGS_DO), 7), 17)) and x"FFFE";
@@ -1158,7 +1169,7 @@ begin
 						
 					when VS_OUTX =>
 						ENDX <= ENDX_BUF;
-						ENVX_OUT <= TENVX(VS.V);
+						ENVX_OUT <= TENVX(VS_V);
 						
 					when VS_ECHO =>
 						

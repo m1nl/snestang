@@ -153,14 +153,14 @@ module hid (
             end
             if (state == 4'd4) begin
               if (device == 8'd0) begin
-                joystick0[11] <= data_in[0];
-                joystick0[10] <= data_in[1];
+                joystick0[10] <= data_in[0];
+                joystick0[11] <= data_in[1];
                 joystick0[2]  <= data_in[2];
                 joystick0[3]  <= data_in[3];
               end
               if (device == 8'd1) begin
-                joystick1[11] <= data_in[0];
-                joystick1[10] <= data_in[1];
+                joystick1[10] <= data_in[0];
+                joystick1[11] <= data_in[1];
                 joystick1[2]  <= data_in[2];
                 joystick1[3]  <= data_in[3];
               end

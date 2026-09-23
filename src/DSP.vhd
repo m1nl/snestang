@@ -218,6 +218,9 @@ architecture rtl of DSP is
 	signal RAM_WE 			: std_logic;
 	signal RAM_OE 			: std_logic;
 	signal RAM_CE 			: std_logic;
+	signal SMP_A_BUF		: std_logic_vector(15 downto 0);
+	signal SMP_DO_BUF		: std_logic_vector(7 downto 0);
+	signal SMP_WE_BUF		: std_logic;
 	
 	--debug
 	constant DBG_VMUTE 	: std_logic_vector(7 downto 0) := (others => '0');
@@ -368,8 +371,17 @@ begin
 	BRR_VOICE <= BRR_VOICE_TBL(STEP);
 	BDS <= BDS_TBL(STEP,SUBSTEP);
 	INS <= IS_TBL(STEP,SUBSTEP);
+
+	process(CLK)
+	begin
+		if rising_edge(CLK) then
+			SMP_A_BUF <= SMP_A;
+			SMP_DO_BUF <= SMP_DO;
+			SMP_WE_BUF <= SMP_WE;
+		end if;
+	end process;
 	
-	process(CLK, RST_N, RS, BRR_VOICE, STEP, SMP_A, SMP_WE, SMP_DO, KON_CNT, TDIR_ADDR, BRR_ADDR, BRR_OFFS,
+	process(CLK, RST_N, RS, BRR_VOICE, STEP, SMP_A_BUF, SMP_WE_BUF, SMP_DO_BUF, KON_CNT, TDIR_ADDR, BRR_ADDR, BRR_OFFS,
 			  ECHO_WR_EN, ECHO_ADDR, EOUT, ENABLE, IO_ADDR, IO_REG_DAT, IO_REG_WR)
 		variable ADDR_INC : unsigned(1 downto 0);
 		variable LR: integer range 0 to 1;
@@ -464,11 +476,11 @@ begin
 				end if;
 				
 			when RS_SMP =>
-				RAM_A <= SMP_A;
-				RAM_WE <= not SMP_WE;
-				RAM_OE <= SMP_WE;
-				RAM_DO <= SMP_DO;
-				if SMP_A(15 downto 4) = x"00F" then
+				RAM_A <= SMP_A_BUF;
+				RAM_WE <= not SMP_WE_BUF;
+				RAM_OE <= SMP_WE_BUF;
+				RAM_DO <= SMP_DO_BUF;
+				if SMP_A_BUF(15 downto 4) = x"00F" then
 					RAM_CE <= '0';
 				else
 					RAM_CE <= '1';

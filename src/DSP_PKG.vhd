@@ -4,7 +4,7 @@ library STD;
 use ieee.numeric_std.all;
 
 package DSP_PKG is  
-	constant MCLK_NTSC_FREQ : integer := 21477300;
+	constant MCLK_NTSC_FREQ : integer := 21484400; -- 21477270;
 	constant MCLK_PAL_FREQ  : integer := 21281370;
 	constant ACLK_TYPE_FREQ : integer :=  4119040; -- 4096000;
 	constant ACLK_REAL_FREQ : integer :=  4104960;

@@ -170,11 +170,11 @@ localparam [10:0] MODE_REG   = {4'b0, CAS[2:0], BURST_MODE, BURST_LEN};
 
 // 64ms/8192 rows = 7.8us -> 500 cycles@64.8MHz
 // 64ms/8192 rows = 7.8us -> 672 cycles@86.0MHz
-// 672 * 0.95 ~= 638
-localparam RFRSH_CYCLES = 10'd638;
+localparam RFRSH_CYCLES_LOW  = 10'd512;
+localparam RFRSH_CYCLES_HIGH = 10'd640;
 
 // state
-reg [7:0] cycle;       // one hot encoded
+reg [7:0] cycle;  // one hot encoded
 reg       normal;
 reg [4:0] setup;
 
@@ -199,12 +199,13 @@ localparam PORT_VRAM2 = 2'd3;
 
 reg  [1:0] port[3];
 reg  [1:0] next_port[3];
-reg [24:0] next_addr[3];        // 2-bit bank #, then 8MB byte address in bank
+reg [24:0] next_addr[3];  // 2-bit bank #, then 8MB byte address in bank
 reg [15:0] next_din[3];
 reg  [1:0] next_ds[3];
 reg  [2:0] next_we;
 reg  [2:0] next_oe;
 
+reg aram_req_last;
 reg write_delay;
 reg clkref_r;
 
@@ -214,7 +215,25 @@ always @(posedge clk)
 reg [9:0] refresh_cnt;
 reg       refresh;
 
-wire need_refresh = (refresh_cnt > RFRSH_CYCLES);
+reg should_refresh;
+reg need_refresh;
+reg do_refresh;
+
+always @(posedge clk) begin
+    if (refresh) begin
+        do_refresh     <= 1'b0;
+        should_refresh <= 1'b0;
+        need_refresh   <= 1'b0;
+
+    end else begin
+        do_refresh <= (should_refresh && aram_req_last) || need_refresh;
+
+        if (refresh_cnt == RFRSH_CYCLES_LOW)
+            should_refresh <= 1'b1;
+        if (refresh_cnt == RFRSH_CYCLES_HIGH)
+            need_refresh <= 1'b1;
+    end
+end
 
 assign refreshing = refresh;
 assign busy       = ~normal;
@@ -409,6 +428,7 @@ always @(posedge clk, negedge resetn) begin
                 if (next_port[1] != PORT_NONE) begin
                     cmd <= CMD_BankActivate;
                     aram_req_ack <= aram_req;
+                    aram_req_last <= 1'b1;
                 end
             end
 
@@ -426,13 +446,18 @@ always @(posedge clk, negedge resetn) begin
             end
 
             // REFRESH if there's no ongoing CPU/ARAM/VRAM nor upcoming VRAM requests
-            if (cycle[2] &&
+            if (cycle[2] && do_refresh &&
                 !(vram1_req^vram1_ack) && !(vram2_req^vram2_ack) &&
                 !we_latch[0] && !oe_latch[0] && !we_latch[1] && !oe_latch[1]) begin
                 refresh <= 1'b1;
                 refresh_cnt <= 0;
                 cmd <= CMD_AutoRefresh;
                 total_refresh <= total_refresh + 1;
+            end
+
+            // Reset aram_req_last when no ARAM request has been scheduled
+            if (cycle[2] && !we_latch[1] && !oe_latch[1]) begin
+                aram_req_last <= 1'b0;
             end
 
             // T_RC=7

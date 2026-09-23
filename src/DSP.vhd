@@ -680,13 +680,18 @@ begin
 
 					case FILTER is
 						when "00" => 
-							SF := (resize(SR, 17));
+							SF := resize(SR, 17);
 						when "01" => 
-							SF := (resize(SR + shift_right(P0, 1) + shift_right((0-P0), 5), 17));
+							SF := resize(SR, 17)
+								+ shift_right(P0, 1) - shift_right(P0, 5);
 						when "10" => 
-							SF := (resize(SR + (P0*1) + shift_right(0 - (P0 + (P0*2)),6) - P1 + shift_right(P1, 4), 17));
+							SF := resize(SR, 17)
+								+ P0 - shift_right(P0, 6) - shift_right(P0, 5)
+								- P1 + shift_right(P1, 4);
 						when others => 
-							SF := (resize(SR + (P0*1) + shift_right(0 - (P0 + (P0*4) + (P0*8)),7) - P1 + shift_right(((P1*2) + P1),4) , 17));
+							SF := resize(SR, 17)
+								+ P0 - shift_right(P0, 7) - shift_right(P0, 5) - shift_right(P0, 4)
+								- P1 + shift_right(P1, 4) + shift_right(P1, 3);
 					end case;
 
 					SOUT := shift_left(CLAMP16(SF), 1);

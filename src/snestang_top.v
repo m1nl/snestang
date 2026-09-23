@@ -233,7 +233,7 @@ wire        aram_16 = 0;
 wire BLEND = 1'b0;
 reg        PAL;
 wire       dotclk  /*verilator public*/;
-wire [14:0] rgb_out  /*verilator public*/;
+wire [23:0] rgb_out  /*verilator public*/;
 wire [8:0] x_out /*verilator public*/, y_out /*verilator public*/;
 wire       hblankn,vblankn;
 
@@ -326,7 +326,7 @@ main #(.USE_DSPn(USE_DSPn), .USE_GSU(USE_GSU)) main (
     .ARAM_ADDR(ARAM_ADDR), .ARAM_Q(ARAM_Q), .ARAM_D(ARAM_D),
     .ARAM_CE_N(ARAM_CE_N), .ARAM_OE_N(ARAM_OE_N), .ARAM_WE_N(ARAM_WE_N),
 
-    .BLEND(BLEND), .PAL(PAL), .HIGH_RES(), .FIELD(), .INTERLACE(), .DIS_SHORTLINE(),
+    .BLEND(BLEND), .PAL(PAL), .HIGH_RES(), .FIELD(), .INTERLACE(),
     .DOTCLK(dotclk), .RGB_OUT(rgb_out), .HBLANKn(hblankn),
     .VBLANKn(vblankn), .X_OUT(x_out), .Y_OUT(y_out),
 
@@ -650,10 +650,12 @@ wire [7:0] overlay_y;
 
 wire [7:0] dbg_dat_out_loader;
 
+wire [14:0] rgb5 = {rgb_out[23:19], rgb_out[15:11], rgb_out[7:3]};
+
 snes2hdmi #(.SNES_FREQ(SNES_FREQ), .PIXEL_FREQ(PIXEL_FREQ)) s2h (
     .clk(mclk), .resetn(resetn), .snes_refresh(refresh),
     .pause_snes_for_frame_sync(pause_snes_for_frame_sync),
-    .dotclk(dotclk), .hblank(~hblankn),.vblank(~vblankn),.rgb5(rgb_out),
+    .dotclk(dotclk), .hblank(~hblankn),.vblank(~vblankn),.rgb5(rgb5),
     .xs(x_out), .ys(y_out),
     .overlay(overlay), .overlay_x(overlay_x), .overlay_y(overlay_y),
     .overlay_color(overlay_color),

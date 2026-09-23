@@ -61,12 +61,11 @@ module main (
 
 	input             BLEND,
 	input             PAL,
-	input		      DIS_SHORTLINE,
 	output            HIGH_RES,
 	output            FIELD,
 	output            INTERLACE,
 	output            DOTCLK,
-    output     [14:0] RGB_OUT,
+    output     [23:0] RGB_OUT,
 	output            HBLANKn,
 	output            VBLANKn,
     output     [8:0]  X_OUT,
@@ -153,8 +152,7 @@ wire        PAWR_N;
 
 wire  [5:0] MAP_ACTIVE;
 
-SNES SNES
-(
+SNES SNES (
 	.MCLK(MCLK), .RST_N(RESET_N), .ENABLE(ENABLE),
 
 	.CA(CA), .CPURD_N(CPURD_N),	.CPUWR_N(CPUWR_N), .CPURD_CYC_N(CPURD_CYC_N),
@@ -182,7 +180,7 @@ SNES SNES
 	// .JOY2_P6(JOY2_P6),
 	// .JOY2_P6_IN(JOY2_P6_IN),
 
-	.BLEND(BLEND), .PAL(PAL), .DIS_SHORTLINE(DIS_SHORTLINE),
+	.BLEND(BLEND), .PAL(PAL),
 	.HIGH_RES(HIGH_RES), .FIELD_OUT(FIELD), .INTERLACE(INTERLACE), .DOTCLK(DOTCLK),
 	.V224_MODE(),
 

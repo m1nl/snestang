@@ -325,14 +325,14 @@ assign DOT_CLK_CE_O = DOT_CLK_CE;
 P65C816 P65C816(
     .CLK(CLK), .RST_N(RST_N), .CE(INT_CLKF_CE),
 
-    .WE_N(P65_R_WN), .D_IN(P65_DI), .D_OUT(P65_DO), .A_OUT(P65_A),
+    .WE(P65_R_WN), .D_IN(P65_DI), .D_OUT(P65_DO), .A_OUT(P65_A),
     .RDY_IN(P65_EN), .NMI_N(P65_NMI_N), .IRQ_N(P65_IRQ_N),
     .ABORT_N(1'b1), .VPA(P65_VPA), .VDA(P65_VDA),
 
-    .RDY_OUT(), .MLB(), .VPB(),
+    .RDY_OUT(), .MLB(), .VPB()
 
-    .BRK_OUT(P65_BRK), .DBG_REG(DBG_REG), .DBG_DAT_IN(DBG_DAT_IN),
-    .DBG_DAT_OUT(DBG_CPU_DAT), .DBG_DAT_WR(DBG_CPU_WR)
+//    .BRK_OUT(P65_BRK), .DBG_REG(DBG_REG), .DBG_DAT_IN(DBG_DAT_IN),
+//    .DBG_DAT_OUT(DBG_CPU_DAT), .DBG_DAT_WR(DBG_CPU_WR)
 );
 
 always @* begin
@@ -663,6 +663,7 @@ end
 always @* begin : P4
     reg [2:0] i;
 
+    i = 0;  // remove latch
     P65_DI = DI;
     if (IO_SEL) begin
         P65_DI = MDR;

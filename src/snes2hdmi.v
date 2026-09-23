@@ -136,9 +136,9 @@ module snes2hdmi #(
     initial begin
         // On power-up, fill line buffer with a gradient
         for (j = 0; j < 512; j=j+1) begin
-            mem[j][14:10] = j;
-            mem[j][9:5] = j;
-            mem[j][4:0] = j;
+            mem[j][14:10] = j[4:0];
+            mem[j][ 9: 5] = j[4:0];
+            mem[j][ 4: 0] = j[4:0];
         end
     end
 
@@ -200,10 +200,8 @@ module snes2hdmi #(
     always @(posedge clk) begin
         audio_sample_ack_d <= {audio_sample_ack_d[0], audio_sample_ack};
 
-        if (audio_sample_ack_d[0] != audio_sample_ack_d[1]) begin
+        if (audio_sample_ack_d[0] != audio_sample_ack_d[1])
             audio_sample <= {audio_r, audio_l};
-            audio_sample_ack_d <= audio_sample_ack;
-        end
     end
 
     //

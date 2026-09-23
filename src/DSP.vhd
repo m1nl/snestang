@@ -382,7 +382,7 @@ begin
 	end process;
 	
 	process(CLK, RST_N, RS, BRR_VOICE, STEP, SMP_A_BUF, SMP_WE_BUF, SMP_DO_BUF, KON_CNT, TDIR_ADDR, BRR_ADDR, BRR_OFFS,
-			  ECHO_WR_EN, ECHO_ADDR, EOUT, ENABLE, IO_ADDR, IO_REG_DAT, IO_REG_WR)
+			  ECHO_WR_EN, TESA, ECHO_POS, EOUT, ENABLE, IO_ADDR, IO_REG_DAT, IO_REG_WR)
 		variable ADDR_INC : unsigned(1 downto 0);
 		variable LR: integer range 0 to 1;
 	begin
@@ -440,9 +440,9 @@ begin
 				end if;
 				
 				if RS = RS_ECHORDL then
-					RAM_A <= std_logic_vector(ECHO_ADDR + ADDR_INC + 0);
+					RAM_A <= std_logic_vector((unsigned(TESA) & x"00") + ECHO_POS + ADDR_INC + 0);
 				else
-					RAM_A <= std_logic_vector(ECHO_ADDR + ADDR_INC + 1);
+					RAM_A <= std_logic_vector((unsigned(TESA) & x"00") + ECHO_POS + ADDR_INC + 1);
 				end if;
 				RAM_WE <= '0';
 				RAM_OE <= '1';
@@ -458,10 +458,10 @@ begin
 				end if;
 				
 				if RS = RS_ECHOWRL then
-					RAM_A <= std_logic_vector(ECHO_ADDR + ADDR_INC + 0);
+					RAM_A <= std_logic_vector((unsigned(TESA) & x"00") + ECHO_POS + ADDR_INC + 0);
 					RAM_DO <= std_logic_vector(EOUT(LR)(7 downto 0));
 				else
-					RAM_A <= std_logic_vector(ECHO_ADDR + ADDR_INC + 1);
+					RAM_A <= std_logic_vector((unsigned(TESA) & x"00") + ECHO_POS + ADDR_INC + 1);
 					RAM_DO <= std_logic_vector(EOUT(LR)(15 downto 8));
 				end if;
 				

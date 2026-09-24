@@ -53,7 +53,7 @@ trace2: ./obj_dir/V$N
 	@cd obj_dir && ./V$N -t -c 3000000000 -s 300000000
 
 gtkwave:
-	gtkwave obj_dir/waveform.vcd
+	gtkwave obj_dir/waveform.fst
 
 audio:
 	ffmpeg -y -f s16le -ar 32k -ac 2 -i obj_dir/snes.aud snes.wav

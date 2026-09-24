@@ -254,7 +254,8 @@ reg snes_start = 1'b0;
 wire pause_snes_for_frame_sync;
 
 wire [7:0] loader_do;
-wire loader_do_valid, loading, header_finished;
+wire loader_do_valid, loader_do_ready;
+wire loading, header_finished;
 
 reg [22:0] loader_addr = 0;
 
@@ -382,9 +383,8 @@ assign      O_sdram_clk = fclk_p;
 always @(posedge mclk) begin
     if (~resetn) begin
     end else begin
-
         // ROM read and load
-        if (loading && loader_do_valid && header_finished && loader_addr[0]
+        if (loading && (loader_do_valid && loader_do_ready) && header_finished && loader_addr[0]
             || ~loading && ~ROM_CE_N && rom_addr_sd != rom_addr) begin
             rom_addr_sd <= rom_addr;
             cpu_addr <= rom_addr;
@@ -429,6 +429,7 @@ localparam RV_WAIT0_REQ1 = 3'd1;
 localparam RV_DATA0 = 3'd2;
 localparam RV_WAIT1 = 3'd3;
 localparam RV_DATA1 = 3'd4;
+
 reg [2:0]   rvst;
 
 wire        rv_valid;
@@ -487,7 +488,7 @@ sdram_snes sdram(
 
     // ARAM accesses
     .aram_16(aram_16), .aram_addr(ARAM_ADDR), .aram_din({ARAM_D, ARAM_D}),
-    .aram_dout(aram_dout), .aram_req(aram_req), .aram_req_ack(), .aram_we(aram_wr),
+    .aram_dout(aram_dout), .aram_req(aram_req), .aram_req_ack(aram_req_ack), .aram_we(aram_wr),
 
 `ifdef SDRAM_3CH
     // VRAM accesses
@@ -518,6 +519,8 @@ vram vram(
 );
 `endif
 
+assign loader_do_ready = (cpu_req == cpu_req_ack);
+
 reg [7:0] loader_do_r;
 reg loading_r;
 
@@ -530,13 +533,14 @@ smc_parser smc (
     .header_finished(header_finished)
 );
 
-always @(posedge mclk) begin
+always @(posedge mclk, negedge resetn) begin
     if (~resetn) begin
+        loader_addr <= 0;
         loading_r <= 0;
         loaded <= 0;
     end else begin
         loading_r <= loading;
-        if (loader_do_valid && header_finished) begin
+        if (loader_do_valid && loader_do_ready && header_finished) begin
             loader_addr <= loader_addr + 23'd1;
             loader_do_r <= loader_do;
         end
@@ -641,6 +645,7 @@ controller_adapter joy2_adapter (
     .clk(mclk), .snes_joy_strb(snes_joy_strb),
     .snes_buttons(joy2_btns | hid2), .snes_joy_clk(snes_joy2_clk), .snes_joy_di(snes_joy2_di[0])
 );
+
 assign snes_joy1_di[1] = 0;  // P3
 assign snes_joy2_di[1] = 0;  // P4
 
@@ -679,14 +684,19 @@ iosys_bl616 #(.CORE_ID(2), .FREQ(SNES_FREQ)) iosys (
 `else
 
 // IOSys for menu, rom loading...
-iosys_picorv32 #(.CORE_ID(2)) iosys (        // CORE ID 2: SNESTang
+`ifdef MCU_SERV
+iosys_serv
+`else
+iosys_picorv32
+`endif
+    #(.CORE_ID(2)) iosys (        // CORE ID 2: SNESTang
     .clk(mclk), .hclk(hclk), .resetn(resetn),
 
     .overlay(overlay), .overlay_x(overlay_x), .overlay_y(overlay_y),
     .overlay_color(overlay_color),
     .joy1(joy1_btns), .joy2(joy2_btns),
 
-    .rom_loading(loading), .rom_do(loader_do), .rom_do_valid(loader_do_valid),
+    .rom_loading(loading), .rom_do(loader_do), .rom_do_valid(loader_do_valid), .rom_do_ready(loader_do_ready),
     .ram_busy(sdram_busy),
 
     .rv_valid(rv_valid), .rv_ready(rv_ready), .rv_addr(rv_addr),

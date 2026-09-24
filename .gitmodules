@@ -1,0 +1,3 @@
+[submodule "src/iosys/serv"]
+	path = src/iosys/serv
+	url = https://github.com/olofk/serv

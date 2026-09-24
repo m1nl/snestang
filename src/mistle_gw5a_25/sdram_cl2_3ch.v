@@ -1,9 +1,11 @@
-// Triple-channel CL2 SDRAM controller for SNES on Tang Primer 25K
+// Triple-channel CL2 SDRAM controller for SNES on MiSTle GW5A-25 board
 // nand2mario 2024.2
+// m1nl 2026.9
 //
 // This supports 3 parallel access streams (ROM/WRAM/BSRAM/RiscV softcore, ARAM, VRAM),
-// independent from each other. SNES ROM/WRAM uses bank 0 (8MB, largest game is 6MB,
-// BSRAM max 1MB). RV and BSRAM uses bank 1. ARAM uses bank 2. VRAM uses bank 3.
+// independent from each other. SNES ROM/WRAM uses the first 6MB of banks 0 and 1,
+// with WRAM in the final 128KB. RV and BSRAM use the upper 2MB of bank 1.
+// ARAM uses bank 2. VRAM uses bank 3.
 // SDRAM works at 86Mhz.
 //
 // SDRAM is accessed in an interleaving style like this (RAS: bank activation,
@@ -79,12 +81,13 @@ module sdram_snes
     input             clkref,       // main reference clock, half speed of clk
     input             resetn,
 
-    // CPU access (ROM and WRAM) uses bank 0 and 1 (total 16MB)
+    // CPU access uses bank 0 and the first 2MB of bank 1 (6MB total).
+    // WRAM occupies the final 128KB of that 6MB region.
     input      [15:0] cpu_din       /* synthesis syn_keep=1 */,
     input             cpu_port,
     output reg [15:0] cpu_port0,    // output register for bank 0
     output reg [15:0] cpu_port1,    // output register for bank 1
-    input      [22:1] cpu_addr,     // 8MB SNES memory, with WRAM at end
+    input      [22:1] cpu_addr,     // 6MB SNES memory, with WRAM at end
     input             cpu_req,
     output reg        cpu_req_ack,
     input             cpu_we,
@@ -249,14 +252,24 @@ always @(*) begin
     next_din[0] = 0;
     if (cpu_req ^ cpu_req_ack) begin
         next_port[0] = PORT_CPU;
-        next_addr[0] = { 2'b00, cpu_addr, 1'b0 };       // CPU uses bank 0, WRAM at the end
         next_din[0]  = cpu_din;
         next_ds[0]   = cpu_ds;
-        next_we[0]   = cpu_we;
-        next_oe[0]   = ~cpu_we;
+        if (cpu_port) begin
+            // Remap logical WRAM at 0x7E0000-0x7FFFFF to the final
+            // 128KB of the 6MB CPU region: bank 1, 0x1E0000-0x1FFFFF.
+            next_addr[0] = { 2'b01, 2'b00, 4'b1111, cpu_addr[16:1], 1'b0 };
+            next_we[0]   = cpu_we;
+            next_oe[0]   = ~cpu_we;
+        end else if (cpu_addr[22:21] != 2'b11) begin
+            // ROM is limited to 0x000000-0x5FFFFF. A12 is unused on
+            // the 16MB SDRAM, so bank 1 starts at CPU address 0x400000.
+            next_addr[0] = { 1'b0, cpu_addr[22], 1'b0, cpu_addr[21:1], 1'b0 };
+            next_we[0]   = cpu_we;
+            next_oe[0]   = ~cpu_we;
+        end
     end else if (bsram_req ^ bsram_req_ack) begin
         next_port[0] = PORT_BSRAM;
-        next_addr[0] = { 2'b01, 3'b111, bsram_addr };   // BSRAM at start of 7MB bank 1
+        next_addr[0] = { 2'b01, 3'b011, bsram_addr };   // BSRAM at physical 3MB in bank 1
         next_din[0] = { bsram_din, bsram_din };
         next_ds[0] = {bsram_addr[0], ~bsram_addr[0]};
         next_we[0] = bsram_we;
@@ -265,7 +278,7 @@ always @(*) begin
         /* no-op */
     end else if (rv_req ^ rv_req_ack) begin             // RV uses bank 1 and has lowest priority
         next_port[0] = PORT_RV;
-        next_addr[0] = { 2'b01, rv_addr, 1'b0 };
+        next_addr[0] = { 2'b01, 2'b01, rv_addr[20:1], 1'b0 }; // upper 2MB of bank 1
         next_we[0] = rv_we;
         next_oe[0] = ~rv_we;
         next_din[0] = rv_din;
@@ -412,7 +425,10 @@ always @(posedge clk, negedge resetn) begin
                 SDRAM_BA <= next_addr[0][24:23];
                 din_latch[0] <= next_din[0];
                 ds[0] <= next_ds[0];
-                if (next_port[0] != PORT_NONE) cmd <= CMD_BankActivate;
+                // Invalid CPU addresses are acknowledged without issuing an
+                // SDRAM operation, so they cannot reach the reserved upper 2MB.
+                if (next_port[0] != PORT_NONE && (next_oe[0] || next_we[0]))
+                    cmd <= CMD_BankActivate;
                 write_delay <= next_oe[0] & next_we[1];     // delay aram write when cpu is read
             end
 

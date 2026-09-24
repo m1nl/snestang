@@ -8,3 +8,7 @@ gwsynthesis
 temp
 roms
 *.user
+
+# Verilator build and simulation outputs
+/verilator/obj_dir/
+/verilator/snes.wav

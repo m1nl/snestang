@@ -32,8 +32,8 @@ module test_loader (
 // localparam string FILE = "roms/MosaicMode3.hex";
 
 // 128KB ROMS
-// localparam SIZE = 131584;
-// localparam string FILE = "roms/hello.hex";
+localparam SIZE = 131584;
+localparam string FILE = "roms/hello.hex";
 // localparam string FILE = "roms/hello2.hex";
 // localparam string FILE = "roms/textbuffer-hello-world.hex";
 // localparam string FILE = "roms/Perspective.hex";
@@ -45,9 +45,9 @@ module test_loader (
 // localparam string FILE = "roms/SuperFX.hex";
 
 // 512KB roms
-localparam SIZE = 524800;
+// localparam SIZE = 524800;
 // localparam string FILE = "roms/inidisp_extend_vblank.hex";
-localparam string FILE = "roms/superbomberman.hex";
+// localparam string FILE = "roms/superbomberman.hex";
 
 // 256KB ROMS
 //localparam SIZE = 262656;

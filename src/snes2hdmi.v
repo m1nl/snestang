@@ -26,7 +26,6 @@ module snes2hdmi #(
     input [15:0] audio_l,
     input [15:0] audio_r,
     input audio_ready,
-    output audio_en,
 
     // frame-sync pause happens during snes_refresh
     input snes_refresh,

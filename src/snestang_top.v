@@ -233,13 +233,14 @@ wire        aram_16 = 0;
 wire BLEND = 1'b0;
 reg        PAL;
 wire       dotclk  /*verilator public*/;
-wire [23:0] rgb_out  /*verilator public*/;
+wire [7:0] R_OUT  /*verilator public*/;
+wire [7:0] G_OUT  /*verilator public*/;
+wire [7:0] B_OUT  /*verilator public*/;
 wire [8:0] x_out /*verilator public*/, y_out /*verilator public*/;
 wire       hblankn,vblankn;
 
 wire [15:0] audio_l /*verilator public*/, audio_r /*verilator public*/;
 wire audio_ready /*verilator public*/;
-wire audio_en /*XXX synthesis syn_keep=1 */;
 
 wire snes_joy_strb;
 wire snes_joy1_clk, snes_joy2_clk;
@@ -302,11 +303,15 @@ parameter USE_GSU=0;
 // `endif
 
 `ifndef DISABLE_SNES
-main #(.USE_DSPn(USE_DSPn), .USE_GSU(USE_GSU)) main (
-    .MCLK(mclk), .RESET_N(snes_resetn), .ENABLE(snes_enable),
+main #(
+    .USE_DSPn(USE_DSPn),
+    .USE_GSU(USE_GSU),
+    .USE_SS(1'b0)
+) main (
+    .MCLK(mclk), .ACLK(mclk), .RESET_N(snes_resetn), .ENABLE(snes_enable),
     .SYSCLKF_CE(sysclkf_ce), .SYSCLKR_CE(sysclkr_ce), .REFRESH(refresh),
 
-    .ROM_TYPE(rom_type), .ROM_MASK(rom_mask), .RAM_MASK(ram_mask),
+    .ROM_TYPE(rom_type), .ROM_MASK(rom_mask), .RAM_MASK(ram_mask), .RAM_SIZE(ram_size),
 
     .ROM_ADDR(ROM_ADDR), .ROM_D(ROM_D), .ROM_Q(ROM_Q),
     .ROM_CE_N(ROM_CE_N), .ROM_OE_N(ROM_OE_N), .ROM_WE_N(ROM_WE_N),
@@ -328,19 +333,30 @@ main #(.USE_DSPn(USE_DSPn), .USE_GSU(USE_GSU)) main (
     .ARAM_CE_N(ARAM_CE_N), .ARAM_OE_N(ARAM_OE_N), .ARAM_WE_N(ARAM_WE_N),
 
     .BLEND(BLEND), .PAL(PAL), .HIGH_RES(), .FIELD(), .INTERLACE(),
-    .DOTCLK(dotclk), .RGB_OUT(rgb_out), .HBLANKn(hblankn),
+    .DOTCLK(dotclk), .R(R_OUT), .G(G_OUT), .B(B_OUT), .HBLANKn(hblankn),
     .VBLANKn(vblankn), .X_OUT(x_out), .Y_OUT(y_out),
 
     .JOY1_DI(overlay?2'b11:snes_joy1_di), .JOY2_DI(overlay?2'b11:snes_joy2_di), .JOY_STRB(snes_joy_strb),
     .JOY1_CLK(snes_joy1_clk), .JOY2_CLK(snes_joy2_clk),
 
-    .AUDIO_L(audio_l), .AUDIO_R(audio_r), .AUDIO_READY(audio_ready), .AUDIO_EN(audio_en),
+    .AUDIO_L(audio_l), .AUDIO_R(audio_r), .AUDIO_READY(audio_ready),
 
-    .JOY1_P6(), .JOY2_P6(), .JOY2_P6_in(), .DOT_CLK_CE(DOT_CLK_CE), .EXT_RTC(),
-    .SPC_MODE(), .IO_ADDR(), .IO_DAT(), .IO_WR(),
+    .JOY1_P6(), .JOY2_P6(), .JOY2_P6_in(1'b0), .DOT_CLK_CE(DOT_CLK_CE), .EXT_RTC(65'd0),
+    .GG_EN(1'b0), .GG_CODE(129'd0), .GG_RESET(1'b0), .GG_AVAILABLE(),
+    .SPC_MODE(1'b0), .IO_ADDR(17'd0), .IO_DAT(16'd0), .IO_WR(1'b0),
 
-    .DBG_SEL(dbg_sel), .DBG_REG(dbg_reg), .DBG_REG_WR(dbg_reg_wr), .DBG_DAT_IN(dbg_dat_in),
-    .DBG_DAT_OUT(dbg_dat_out), .DBG_BREAK(dbg_break)
+    .TURBO(1'b0), .DSP_FREQ(1'b0),
+
+    .GSU_TURBO(1'b0), .GSU_FASTROM(1'b0), .SUFAMI_SWAP(1'b0), .CC_DIP(8'd0),
+
+    .MSU_TRACK_MOUNTING(1'b0), .MSU_TRACK_MISSING(1'b0), .MSU_AUDIO_STOP(1'b0),
+    .MSU_AUDIO_SECTOR(22'd0), .MSU_AUDIO_LOOP_INDEX(32'd0),
+    .MSU_DATA(8'd0), .MSU_DATA_ACK(1'b0), .MSU_ENABLE(1'b0),
+
+    .SS_SAVE(1'b0), .SS_TOSD(1'b0), .SS_LOAD(1'b0), .SS_SLOT(2'b00),
+    .SS_DDR_DI(64'd0), .SS_DDR_ACK(1'b0),
+
+    .DBG_BG_EN(5'b11111), .DBG_CPU_EN(1'b1)
 );
 `endif
 
@@ -376,6 +392,7 @@ wire        aram_wr = ~ARAM_CE_N & ~ARAM_WE_N;
 reg [15:0]  aram_addr_sd;
 reg         aram_rd_r, aram_wr_r;
 reg         aram_req;
+wire        aram_req_ack;
 
 assign      O_sdram_clk = fclk_p;
 
@@ -602,10 +619,10 @@ mcu_spi mcu (
   .mcu_sdc_strobe(),
   .mcu_start(mcu_start),
   .mcu_dout(mcu_data_out),
-  .mcu_sys_din(),
+  .mcu_sys_din(8'b0),
   .mcu_hid_din(hid_data_out),
-  .mcu_osd_din(),
-  .mcu_sdc_din()
+  .mcu_osd_din(8'b0),
+  .mcu_sdc_din(8'b0)
 );
 
 assign mcu_intn = 1'b1;
@@ -655,7 +672,7 @@ wire [7:0] overlay_y;
 
 wire [7:0] dbg_dat_out_loader;
 
-wire [14:0] rgb5 = {rgb_out[23:19], rgb_out[15:11], rgb_out[7:3]};
+wire [14:0] rgb5 = {B_OUT[7:3], G_OUT[7:3], R_OUT[7:3]};
 
 snes2hdmi #(.SNES_FREQ(SNES_FREQ), .PIXEL_FREQ(PIXEL_FREQ)) s2h (
     .clk(mclk), .resetn(resetn), .snes_refresh(refresh),
@@ -664,7 +681,7 @@ snes2hdmi #(.SNES_FREQ(SNES_FREQ), .PIXEL_FREQ(PIXEL_FREQ)) s2h (
     .xs(x_out), .ys(y_out),
     .overlay(overlay), .overlay_x(overlay_x), .overlay_y(overlay_y),
     .overlay_color(overlay_color),
-    .audio_l(audio_l), .audio_r(audio_r), .audio_ready(audio_ready), .audio_en(audio_en),
+    .audio_l(audio_l), .audio_r(audio_r), .audio_ready(audio_ready),
     .clk_pixel(hclk),.clk_5x_pixel(hclk5),.locked(1'b1),
     .tmds_clk_n(tmds_clk_n), .tmds_clk_p(tmds_clk_p),
     .tmds_d_n(tmds_d_n), .tmds_d_p(tmds_d_p)
@@ -806,7 +823,6 @@ always @(posedge mclk) begin
     else
         sample_counter <= sample_counter == 15 ? 15 : sample_counter + 1;
 end
-assign audio_en = sample_counter == 15;
 
 
 // test video sync by turning on pause_snes_for_frame_sync periodically

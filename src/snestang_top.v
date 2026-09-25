@@ -794,7 +794,7 @@ end
 // test loader with embedded rom
 test_loader test_loader (
     .clk(mclk), .resetn(resetn),
-    .dout(loader_do), .dout_valid(loader_do_valid),
+    .dout(loader_do), .dout_valid(loader_do_valid), .dout_ready(loader_do_ready),
     .loading(loading), .fail()
 );
 

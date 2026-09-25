@@ -5,6 +5,7 @@ module test_loader (
     input resetn,
     output reg [7:0] dout,
     output reg dout_valid,
+    input dout_ready,
     output loading,
     output fail
 );
@@ -67,7 +68,7 @@ localparam string FILE = "roms/hello.hex";
 // effects
 // localparam string FILE = "roms/vmain-vertical-scrolling.hex";
 // localparam string FILE = "roms/repeating_hdma_pattern.hex";
-// localparam string FILE = "roms/window-shapes-single.hex";    
+// localparam string FILE = "roms/window-shapes-single.hex";
 // localparam string FILE = "roms/window-precalculated-single.hex";
 // localparam string FILE = "roms/window-precalculated-symmetrical.hex";
 
@@ -88,32 +89,27 @@ initial begin
    $readmemh(FILE, rom);
 end
 
-reg [$clog2(SIZE)-1:0] addr = 0;
-assign fail = 1'b0;
-assign loading = addr != SIZE;
-reg [1:0] cnt;
+reg [$clog2(SIZE)-1:0] addr;
 
-always @(posedge clk) begin
+assign loading = (addr != SIZE);
+assign fail    = 1'b0;
+
+always @(posedge clk, negedge resetn) begin
     if (~resetn) begin
         addr <= 0;
-    end else begin
-        cnt <= cnt + 1;
-        case (cnt)
-        2'd0: begin
-            dout_valid <= 1;
-            dout <= rom[addr];
-        end
-        2'd1: begin
+        dout_valid <= 0;
+
+    end else if (!dout_valid || dout_ready) begin
+        dout <= rom[addr];
+        dout_valid <= 1;
+
+        if (addr == SIZE) begin
             dout_valid <= 0;
+        end else begin
             addr <= addr + 1;
             if (addr == 63)     // header is 64 bytes long
                 addr <= 512;
         end
-        2'd2: ;
-        2'd3: 
-            if (addr == SIZE)
-                cnt <= 3;       // done
-        endcase
     end
 end
 

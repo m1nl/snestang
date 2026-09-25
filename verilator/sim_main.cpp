@@ -31,8 +31,8 @@ typedef struct Pixel {  // for SDL texture
 Pixel screenbuffer[H_RES*V_RES];
 
 bool trace = false;
-// Default 10 million clock cycles
-long long max_sim_time = 10000000LL;
+// Default 20 million clock cycles
+long long max_sim_time = 20000000LL;
 long long start_trace_time = 0;
 
 void usage() {

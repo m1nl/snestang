@@ -6,11 +6,12 @@
 #include <cstring>
 #include <vector>
 #include <cctype>
+#include <chrono>
+#include <thread>
 
 #include "Vsnestang_top.h"
 #include "Vsnestang_top_snestang_top.h"
 #include "verilated.h"
-//#include <verilated_vcd_c.h>
 #include <verilated_fst_c.h>
 
 #define TRACE_ON
@@ -37,7 +38,7 @@ long long start_trace_time = 0;
 
 void usage() {
 	printf("Usage: sim [-t] [-c T]\n");
-	printf("  -t     output trace file waveform.vcd\n");
+	printf("  -t     output trace file waveform.fst\n");
 	printf("  -s T0  start tracing from time T0\n");
 	printf("  -c T   limit simulate lenght to T time steps. T=0 means infinite.\n");
 }
@@ -66,7 +67,7 @@ int main(int argc, char** argv, char** env) {
 			trace = true;
 			printf("Tracing ON\n");
 		} else if (strcmp(argv[i], "-c") == 0 && i+1 < argc) {
-			max_sim_time = strtoll(argv[++i], &eptr, 10); 
+			max_sim_time = strtoll(argv[++i], &eptr, 10);
 			if (max_sim_time == 0)
 				printf("Simulating forever.\n");
 			else
@@ -110,105 +111,69 @@ int main(int argc, char** argv, char** env) {
         return 1;
     }
 
-	//VerilatedVcdC *m_trace;
 	if (trace)
 		trace_on();
 
 	int audio_ready_r = 0;
 	FILE *f = fopen("snes.aud", "w");
 	long long samples = 0;
-	bool done = false;
 
-	while (!done) {
-		while (max_sim_time == 0 || sim_time < max_sim_time) {
-			top->sys_clk ^= 1;
-			top->eval(); 
-			if (trace && sim_time >= start_trace_time)
-				m_trace->dump(sim_time);
+	while (max_sim_time == 0 || sim_time < max_sim_time) {
+		top->sys_clk ^= 1;
+		top->eval();
+		if (trace && sim_time >= start_trace_time)
+			m_trace->dump(sim_time);
 
-			// collect audio sample
-			if (snes->audio_ready && audio_ready_r == 0) {
-				short ar, al;
-				ar = snes->audio_r;
-				al = snes->audio_l;			
-				fwrite(&ar, sizeof(ar), 1, f);
-				fwrite(&al, sizeof(al), 1, f);
-				samples ++;
-				if (samples % 1000 == 0)
-					printf("%lld samples\n", samples);
-				// printf("%hd %hd\n", top->spcplayer_top->audio_l, top->spcplayer_top->audio_r);
-			}
-			audio_ready_r = snes->audio_ready;
+		// collect audio sample
+		if (snes->audio_ready && audio_ready_r == 0) {
+			short ar, al;
+			ar = snes->audio_r;
+			al = snes->audio_l;
+			fwrite(&ar, sizeof(ar), 1, f);
+			fwrite(&al, sizeof(al), 1, f);
+			samples ++;
+			if (samples % 1000 == 0)
+				printf("%lld samples\n", samples);
+			// printf("%hd %hd\n", top->spcplayer_top->audio_l, top->spcplayer_top->audio_r);
+		}
+		audio_ready_r = snes->audio_ready;
 
-			if (snes->dotclk >= 0 && snes->y_out < V_RES && (snes->x_out >> 1) < H_RES) {
-				Pixel* p = &screenbuffer[snes->y_out*H_RES + (snes->x_out >> 1)];
-				int rgb = snes->rgb_out;
-				p->a = 0xFF;  // transparency
-				p->b = (rgb >> 10) << 3;		// convert 5-bit BGR to 8-bit RGB
-				p->g = ((rgb >> 5) & 0x1f) << 3;
-				p->r = (rgb & 0x1f) << 3;
-			}		
+		if (snes->dotclk >= 0 && snes->y_out < V_RES && (snes->x_out >> 1) < H_RES) {
+			Pixel* p = &screenbuffer[snes->y_out*H_RES + (snes->x_out >> 1)];
+			p->a = 0xFF;  // transparency
+			p->b = snes->B_OUT;
+			p->g = snes->G_OUT;
+			p->r = snes->R_OUT;
+		}
 
-			// update texture once per frame (in blanking)
-			if (snes->y_out == V_RES) {
-				if (!frame_updated) {
-					// check for quit event
-					SDL_Event e;
-					if (SDL_PollEvent(&e)) {
-						if (e.type == SDL_QUIT) {
-							break;
-						}
-					}
-					frame_updated = true;
-					SDL_UpdateTexture(sdl_texture, NULL, screenbuffer, H_RES*sizeof(Pixel));
-					SDL_RenderClear(sdl_renderer);
-					SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL);
-					SDL_RenderPresent(sdl_renderer);
-					frame_count++;				
-
-					if (frame_count % 10 == 0)
-						printf("Frame #%d\n", frame_count);
-				}
-			} else
-				frame_updated = false;
-
-			sim_time++;
-		}	
-
-		printf("Simulation done, time=%lu\n", sim_time);
-		printf("Choose: (S)imulate, (E)nd, (T)race On, or (O)ff\n");
-		printf("  s 100m - simulate 100 million clock cycles\n");
-		printf("  s 0    - simulate forever\n");
-		printf("  s      - simulate 10 million clock cycles\n");
-		do {
-			string line;
-			std::getline(cin, line);
-			vector<string> ss = tokenize(line);
-			if (ss.size() == 0) continue;
-		    transform(ss[0].begin(), ss[0].end(), ss[0].begin(), ::tolower); 
-			if (ss[0] == "s" || ss[0] == "simulate") {
-				long long cycles = 10000000LL;
-				if (ss.size() > 1) {
-					cycles = parse_num(ss[1]);
-					if (cycles == -1) {
-						cout << "Cannot parse number: " << ss[1] << endl;
-						continue;
+		// update texture once per frame (in blanking)
+		if (snes->y_out == V_RES) {
+			if (!frame_updated) {
+				// check for quit event
+				SDL_Event e;
+				if (SDL_PollEvent(&e)) {
+					if (e.type == SDL_QUIT) {
+						break;
 					}
 				}
-				max_sim_time += cycles;
-				break;
-			} else if (ss[0] == "e" || ss[0] == "end") {
-				done = true;
-				break;
-			} else if (ss[0] == "t" || ss[0] == "trace") {
-				cout << "trace on" << endl;
-				trace_on();
-			} else if (ss[0] == "o" || ss[0] == "off") {
-				cout << "trace off" << endl;
-				trace_off();
+				frame_updated = true;
+				SDL_UpdateTexture(sdl_texture, NULL, screenbuffer, H_RES*sizeof(Pixel));
+				SDL_RenderClear(sdl_renderer);
+				SDL_RenderCopy(sdl_renderer, sdl_texture, NULL, NULL);
+				SDL_RenderPresent(sdl_renderer);
+				frame_count++;
+
+				if (frame_count % 10 == 0)
+					printf("Frame #%d\n", frame_count);
 			}
-		} while (1);
+		} else
+			frame_updated = false;
+
+		sim_time++;
 	}
+
+
+    printf("Simulation done, time=%lu\n", sim_time);
 
 	fclose(f);
 	printf("Audio output to snes.aud done.\n");
@@ -221,7 +186,9 @@ int main(int argc, char** argv, char** env) {
     uint64_t end_ticks = SDL_GetPerformanceCounter();
     double duration = ((double)(end_ticks-start_ticks))/SDL_GetPerformanceFrequency();
     double fps = (double)frame_count/duration;
-    printf("Frames per second: %.1f. Total frames=%d\n", fps, frame_count);	
+    printf("Frames per second: %.1f. Total frames=%d\n", fps, frame_count);
+
+    std::this_thread::sleep_for(std::chrono::seconds(5));
 
     SDL_DestroyTexture(sdl_texture);
     SDL_DestroyRenderer(sdl_renderer);
@@ -268,7 +235,7 @@ long long parse_num(string s) {
 			times = 1000000LL;
 		else if (last == 'g')
 			times = 1000000000LL;
-		else 
+		else
 			return -1;
 	}
 	return atoll(s.c_str()) * times;
@@ -276,8 +243,6 @@ long long parse_num(string s) {
 
 void trace_on() {
 	if (!m_trace) {
-		//m_trace = new VerilatedVcdC;
-		//m_trace->open("waveform.vcd");
 		m_trace = new VerilatedFstC;
 		top->trace(m_trace, 5);
 		Verilated::traceEverOn(true);

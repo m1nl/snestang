@@ -2,7 +2,7 @@ if {$argc == 0} {
     puts "Usage: $argv0 <device> [<controller>] [<mcu>]"
     puts "          device: nano20k, primer25k, mega60k, mega138k, console60k"
     puts "      controller: snes, ds2"
-    puts "             mcu: bl616, picorv32"
+    puts "             mcu: bl616, picorv32, serv"
     puts "Note: nano20k supports both controllers simultaneously, so build with just: gw_sh build.tcl nano20k"
     exit 1
 }
@@ -172,7 +172,7 @@ add_file -type vhdl "src/65C816/BCDAdder.vhd"
 add_file -type vhdl "src/65C816/MCode.vhd"
 add_file -type vhdl "src/65C816/P65816_pkg.vhd"
 add_file -type vhdl "src/65C816/P65C816.vhd"
-add_file -type vhdl "src/CPU.vhd"
+add_file -type verilog "src/CPU.v"
 add_file -type verilog "src/dual_clk_fifo.v"
 add_file -type verilog "src/dualshock_controller.v"
 add_file -type verilog "src/gowin_dpb_cgram.v"

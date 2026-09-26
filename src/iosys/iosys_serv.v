@@ -138,56 +138,65 @@ always @(posedge clk, negedge resetn) begin
 end
 
 // SERV softcore
-wire mem_valid /* synthesis syn_keep=1 */;
+wire mem_valid;
 wire mem_ready;
 
-wire [31:0] mem_addr /* synthesis syn_keep=1 */, mem_wdata /* synthesis syn_keep=1 */;
-wire  [3:0] mem_wstrb /* synthesis syn_keep=1 */;
-wire [31:0] mem_rdata /* synthesis syn_keep=1 */;
+wire [31:0] mem_addr, mem_wdata;
+wire  [3:0] mem_wstrb;
+wire [31:0] mem_rdata;
 
-reg ram_ready /* synthesis syn_keep=1 */;
+reg ram_ready;
 reg [31:0] ram_rdata;
 
-wire        ram_sel = mem_valid && mem_addr[31:23] == 0;
+assign mem_ready = ram_ready;
+assign mem_rdata = ram_rdata;
 
-wire        textdisp_reg_char_sel /* synthesis syn_keep=1 */= mem_valid && (mem_addr == 32'h 0200_0000);
+wire ext_valid;
+wire ext_ready;
 
-wire        simpleuart_reg_div_sel = mem_valid && (mem_addr == 32'h 0200_0010);
+wire  [7:0] ext_addr;
+wire [31:0] ext_wdata;
+wire  [3:0] ext_wstrb;
+wire [31:0] ext_rdata;
+
+wire        textdisp_reg_char_sel= ext_valid && (ext_addr == 8'h00);
+
+wire        simpleuart_reg_div_sel = ext_valid && (ext_addr == 8'h10);
 wire [31:0] simpleuart_reg_div_do;
 
-wire        simpleuart_reg_dat_sel /* synthesis syn_keep=1 */ = mem_valid && (mem_addr == 32'h 0200_0014);
+wire        simpleuart_reg_dat_sel = ext_valid && (ext_addr == 8'h14);
 wire [31:0] simpleuart_reg_dat_do;
 wire        simpleuart_reg_dat_wait;
 
-wire        simplespimaster_reg_byte_sel /* synthesis syn_keep=1 */ = mem_valid && (mem_addr == 32'h0200_0020);
-wire        simplespimaster_reg_word_sel /* synthesis syn_keep=1 */ = mem_valid && (mem_addr == 32'h0200_0024);
+wire        simplespimaster_reg_byte_sel = ext_valid && (ext_addr == 8'h20);
+wire        simplespimaster_reg_word_sel = ext_valid && (ext_addr == 8'h24);
 wire [31:0] simplespimaster_reg_do;
-wire        simplespimaster_reg_wait /* synthesis syn_keep=1 */;
+wire        simplespimaster_reg_wait;
 
-wire        romload_reg_ctrl_sel /* synthesis syn_keep=1 */ = mem_valid && (mem_addr == 32'h 0200_0030);       // write 1 to start loading, 0 to finish loading
-wire        romload_reg_data_sel /* synthesis syn_keep=1 */ = mem_valid && (mem_addr == 32'h 0200_0034);       // write once to load 4 bytes
+wire        romload_reg_ctrl_sel = ext_valid && (ext_addr == 8'h30);       // write 1 to start loading, 0 to finish loading
+wire        romload_stream_sel;
+wire        romload_reg_data_sel = ext_valid && (ext_addr == 8'h34);       // write once to load 4 bytes
 reg         romload_reg_data_ready;
 
-wire        joystick_reg_sel = mem_valid && (mem_addr == 32'h 0200_0040);
+wire        joystick_reg_sel = ext_valid && (ext_addr == 8'h40);
 
-wire        time_reg_sel = mem_valid && (mem_addr == 32'h0200_0050);        // milli-seconds since start-up (overflows in 49 days)
-wire        cycle_reg_sel = mem_valid && (mem_addr == 32'h0200_0054);       // cycles counter (overflows every 200 seconds)
+wire        time_reg_sel = ext_valid && (ext_addr == 8'h50);        // milli-seconds since start-up (overflows in 49 days)
+wire        cycle_reg_sel = ext_valid && (ext_addr == 8'h54);       // cycles counter (overflows every 200 seconds)
 
-wire        id_reg_sel = mem_valid && (mem_addr == 32'h0200_0060);
+wire        id_reg_sel = ext_valid && (ext_addr == 8'h60);
 
-wire        spiflash_reg_byte_sel = mem_valid && (mem_addr == 32'h0200_0070);
-wire        spiflash_reg_word_sel = mem_valid && (mem_addr == 32'h0200_0074);
-wire        spiflash_reg_ctrl_sel = mem_valid && (mem_addr == 32'h0200_0078);
+wire        spiflash_reg_byte_sel = ext_valid && (ext_addr == 8'h70);
+wire        spiflash_reg_word_sel = ext_valid && (ext_addr == 8'h74);
+wire        spiflash_reg_ctrl_sel = ext_valid && (ext_addr == 8'h78);
 
-assign mem_ready = ram_ready || textdisp_reg_char_sel || simpleuart_reg_div_sel ||
+assign ext_ready = textdisp_reg_char_sel || simpleuart_reg_div_sel ||
             romload_reg_ctrl_sel || romload_reg_data_ready || joystick_reg_sel || time_reg_sel || cycle_reg_sel || id_reg_sel ||
             (simpleuart_reg_dat_sel && !simpleuart_reg_dat_wait) ||
             ((simplespimaster_reg_byte_sel || simplespimaster_reg_word_sel) && !simplespimaster_reg_wait) ||
             (spiflash_reg_byte_sel || spiflash_reg_word_sel) && !spiflash_reg_wait ||
             spiflash_reg_ctrl_sel;
 
-assign mem_rdata = ram_ready ? ram_rdata :
-        joystick_reg_sel ? {4'b0, joy2, 4'b0, joy1} :
+assign ext_rdata = joystick_reg_sel ? {4'b0, joy2, 4'b0, joy1} :
         simpleuart_reg_div_sel ? simpleuart_reg_div_do :
         simpleuart_reg_dat_sel ? simpleuart_reg_dat_do :
         time_reg_sel ? time_reg :
@@ -195,7 +204,7 @@ assign mem_rdata = ram_ready ? ram_rdata :
         id_reg_sel ? {16'b0, CORE_ID} :
         (simplespimaster_reg_byte_sel | simplespimaster_reg_word_sel) ? simplespimaster_reg_do :
         (spiflash_reg_byte_sel | spiflash_reg_word_sel) ? spiflash_reg_do :
-        32'h 0000_0000;
+        32'h0;
 
 localparam with_csr = 0;
 localparam width    = 4;  // QERV
@@ -211,6 +220,14 @@ wire        wb_mem_we;
 wire        wb_mem_stb;
 wire [31:0] wb_mem_rdt;
 wire        wb_mem_ack;
+
+wire [31:0] wb_ext_adr;
+wire [31:0] wb_ext_dat;
+wire  [3:0] wb_ext_sel;
+wire        wb_ext_we;
+wire        wb_ext_stb;
+wire [31:0] wb_ext_rdt;
+wire        wb_ext_ack;
 
 wire [rf_l2d-1:0]   rf_waddr;
 wire [rf_width-1:0] rf_wdata;
@@ -252,13 +269,13 @@ servile #(
         .i_wb_mem_rdt (wb_mem_rdt),
         .i_wb_mem_ack (wb_mem_ack),
 
-        .o_wb_ext_adr (),
-        .o_wb_ext_dat (),
-        .o_wb_ext_sel (),
-        .o_wb_ext_we  (),
-        .o_wb_ext_stb (),
-        .i_wb_ext_rdt (32'b0),
-        .i_wb_ext_ack (1'b0),
+        .o_wb_ext_adr (wb_ext_adr),
+        .o_wb_ext_dat (wb_ext_dat),
+        .o_wb_ext_sel (wb_ext_sel),
+        .o_wb_ext_we  (wb_ext_we),
+        .o_wb_ext_stb (wb_ext_stb),
+        .i_wb_ext_rdt (wb_ext_rdt),
+        .i_wb_ext_ack (wb_ext_ack),
 
         .o_rf_waddr (rf_waddr),
         .o_rf_wdata (rf_wdata),
@@ -276,12 +293,22 @@ assign mem_wstrb = wb_mem_we ? wb_mem_sel : 4'b0000;
 assign wb_mem_rdt = mem_rdata;
 assign wb_mem_ack = mem_ready;
 
+assign ext_valid = wb_ext_stb && ~wb_ext_adr[31];
+assign ext_addr  = wb_ext_adr[7:0];
+assign ext_wdata = wb_ext_dat;
+assign ext_wstrb = wb_ext_we ? wb_ext_sel : 4'b0000;
+
+assign romload_stream_sel = wb_ext_stb && wb_ext_adr[31];
+
+assign wb_ext_rdt = ext_rdata;
+assign wb_ext_ack = ext_ready;
+
 // text display @ 0x0200_0000
 textdisp #(.COLOR_LOGO(COLOR_LOGO)) disp (
     .clk(clk), .hclk(hclk), .resetn(resetn),
     .x(overlay_x), .y(overlay_y), .color(overlay_color),
-    .reg_char_we(textdisp_reg_char_sel ? mem_wstrb : 4'b0),
-    .reg_char_di(mem_wdata)
+    .reg_char_we(textdisp_reg_char_sel ? ext_wstrb : 4'b0),
+    .reg_char_di(ext_wdata)
 );
 
 // toggle overlay display on/off
@@ -293,8 +320,8 @@ always @(posedge clk, negedge resetn) begin
     if (~resetn) begin
         overlay_buf <= 1;
     end else begin
-        if (textdisp_reg_char_sel && mem_wstrb[0]) begin
-            case (mem_wdata[25:24])
+        if (textdisp_reg_char_sel && ext_wstrb[0]) begin
+            case (ext_wdata[25:24])
             2'd1: overlay_buf <= 1;
             2'd2: overlay_buf <= 0;
             default: ;
@@ -313,13 +340,13 @@ generate
             .ser_tx      (uart_tx),
             .ser_rx      (uart_rx),
 
-            .reg_div_we  (simpleuart_reg_div_sel ? mem_wstrb : 4'b0),
-            .reg_div_di  (mem_wdata),
+            .reg_div_we  (simpleuart_reg_div_sel ? ext_wstrb : 4'b0),
+            .reg_div_di  (ext_wdata),
             .reg_div_do  (simpleuart_reg_div_do),
 
-            .reg_dat_we  (simpleuart_reg_dat_sel ? mem_wstrb[0] : 1'b0),
-            .reg_dat_re  (simpleuart_reg_dat_sel && !mem_wstrb),
-            .reg_dat_di  (mem_wdata),
+            .reg_dat_we  (simpleuart_reg_dat_sel ? ext_wstrb[0] : 1'b0),
+            .reg_dat_re  (simpleuart_reg_dat_sel && !ext_wstrb),
+            .reg_dat_di  (ext_wdata),
             .reg_dat_do  (simpleuart_reg_dat_do),
             .reg_dat_wait(simpleuart_reg_dat_wait)
         );
@@ -341,42 +368,58 @@ assign sd_dat3 = 0;
 simplespimaster simplespi (
     .clk(clk), .resetn(resetn),
     .sck(sd_clk), .mosi(sd_cmd), .miso(sd_dat0),
-    .reg_byte_we(simplespimaster_reg_byte_sel ? mem_wstrb[0] : 1'b0),
-    .reg_word_we(simplespimaster_reg_word_sel ? mem_wstrb[0] : 1'b0),
-    .reg_di(mem_wdata),
+    .reg_byte_we(simplespimaster_reg_byte_sel ? ext_wstrb[0] : 1'b0),
+    .reg_word_we(simplespimaster_reg_word_sel ? ext_wstrb[0] : 1'b0),
+    .reg_di(ext_wdata),
     .reg_do(simplespimaster_reg_do),
     .reg_wait(simplespimaster_reg_wait)
 );
 
 // ROM loading I/O @ 0x02000_0030
+wire romload_req = romload_stream_sel || romload_reg_data_sel;
+
+reg  romload_seen;
+
 reg [31:0] rom_do_buf;
-reg  [1:0] rom_cnt;
+reg  [2:0] rom_cnt;
 
 assign rom_do = rom_do_buf[7:0];
 
 // ROM loader data register
 always @(posedge clk, negedge resetn) begin
     if (~resetn) begin
-        rom_cnt <= 2'd0;
-        rom_do_valid <= 1'b0;
+        romload_seen <= 1'b0;
         romload_reg_data_ready <= 1'b0;
 
+        rom_cnt <= 3'd0;
+        rom_do_valid <= 1'b0;
+
     end else begin
+        if (!romload_req)
+            romload_seen <= 1'b0;
+
         romload_reg_data_ready <= 1'b0;
 
         if (rom_do_ready || !rom_do_valid) begin
-            rom_do_valid <= 1'b0;  // ensure pulse
+            rom_do_valid <= 1'b0;
 
-            if (rom_cnt != 2'd0) begin
-                rom_do_buf[23:0] <= rom_do_buf[31:8];
-                rom_cnt <= rom_cnt - 2'd1;
+            if (rom_cnt != 3'd0) begin
+                rom_do_buf <= {8'd0, rom_do_buf[31:8]};
+                rom_cnt <= rom_cnt - 3'd1;
                 rom_do_valid <= 1;
 
-            end else if (romload_reg_data_sel && mem_wstrb) begin
-                rom_do_buf <= mem_wdata;
-                rom_cnt <= 2'd3;
-                rom_do_valid <= 1;
+            end else if (romload_req && !romload_seen) begin
+                rom_do_buf <= ext_wstrb[0] ? ext_wdata                 :
+                              ext_wstrb[1] ? {8'b0,  ext_wdata[31: 8]} :
+                              ext_wstrb[2] ? {16'b0, ext_wdata[31:16]} :
+                              ext_wstrb[3] ? {24'b0, ext_wdata[31:24]} : ext_wdata;
 
+                rom_cnt <= {2'b0, ext_wstrb[0]} + {2'b0, ext_wstrb[1]} +
+                           {2'b0, ext_wstrb[2]} + {2'b0, ext_wstrb[3]} - 3'd1;
+
+                rom_do_valid <= |ext_wstrb;
+
+                romload_seen <= 1'b1;
                 romload_reg_data_ready <= 1;
             end
         end
@@ -388,8 +431,8 @@ always @(posedge clk, negedge resetn) begin
     if (~resetn) begin
         rom_loading <= 1'b0;
     end else begin
-        if (romload_reg_ctrl_sel && mem_wstrb)
-            rom_loading <= mem_wdata[0];
+        if (romload_reg_ctrl_sel && ext_wstrb[0])
+            rom_loading <= ext_wdata[0];
     end
 end
 
@@ -402,17 +445,17 @@ spiflash #(.ADDR(24'h500000), .LEN(FIRMWARE_SIZE)) flash (
 
     .start(flash_start), .dout(flash_dout), .dout_strb(flash_out_strb), .busy(),
 
-    .reg_byte_we(spiflash_reg_byte_sel ? mem_wstrb[0] : 1'b0),
-    .reg_word_we(spiflash_reg_word_sel ? mem_wstrb[0] : 1'b0),
-    .reg_ctrl_we(spiflash_reg_ctrl_sel ? mem_wstrb[0] : 1'b0),
-    .reg_di(mem_wdata), .reg_do(spiflash_reg_do), .reg_wait(spiflash_reg_wait)
+    .reg_byte_we(spiflash_reg_byte_sel ? ext_wstrb[0] : 1'b0),
+    .reg_word_we(spiflash_reg_word_sel ? ext_wstrb[0] : 1'b0),
+    .reg_ctrl_we(spiflash_reg_ctrl_sel ? ext_wstrb[0] : 1'b0),
+    .reg_di(ext_wdata), .reg_do(spiflash_reg_do), .reg_wait(spiflash_reg_wait)
 );
 
 // RV memory access
 assign rv_addr  = flash_loading ? {11'b0, flash_addr} : mem_addr;
 assign rv_wdata = flash_loading ? {flash_d, flash_d, flash_d, flash_d} : mem_wdata;
 assign rv_wstrb = flash_loading ? flash_wstrb : mem_wstrb;
-assign rv_valid = flash_loading ? flash_wr : (mem_valid & ram_sel);
+assign rv_valid = flash_loading ? flash_wr : mem_valid;
 
 assign ram_rdata = rv_rdata;
 assign ram_ready = rv_ready;

@@ -29,7 +29,8 @@ module main (
 	output reg        BSRAM_CE_N,
 	output reg        BSRAM_OE_N,
 	output reg        BSRAM_WE_N,
-    output wire       BSRAM_RD_N,
+	output wire       BSRAM_RD_N,
+	input wire        BSRAM_DONE,
 
 	output     [16:0] WRAM_ADDR,
 	output      [7:0] WRAM_D,
@@ -629,6 +630,7 @@ wire [7:0]  GSU_BSRAM_D;
 wire        GSU_BSRAM_CE_N;
 wire        GSU_BSRAM_OE_N;
 wire        GSU_BSRAM_WE_N;
+wire        GSU_BSRAM_RD_N;
 
 generate
 if (USE_GSU == 1'b1) begin
@@ -671,6 +673,8 @@ GSUMap GSUMap
 	.BSRAM_CE_N(GSU_BSRAM_CE_N),
 	.BSRAM_OE_N(GSU_BSRAM_OE_N),
 	.BSRAM_WE_N(GSU_BSRAM_WE_N),
+    .BSRAM_RD_N(GSU_BSRAM_RD_N),
+	.BSRAM_DONE(BSRAM_DONE),
 
 	.MAP_ACTIVE(MAP_ACTIVE[2]),
 	.MAP_CTRL(ROM_TYPE),
@@ -681,7 +685,9 @@ GSUMap GSUMap
 	.ROM_REQ(GSU_ROM_REQ),
 	.ROM_OWNED(GSU_ROM_OWNED),
 	.ROM_ACCEPT(GSU_ROM_ACCEPT),
-	.ROM_DONE(GSU_ROM_DONE)
+	.ROM_DONE(GSU_ROM_DONE),
+
+    .CPURD_CYC_N(CPURD_CYC_N)
 );
 assign GSU_ROM_ADDR = gsu_map_rom_addr;
 assign SS_GSU_DI = 8'h00;
@@ -1080,7 +1086,7 @@ assign SS_AVAIL = ~|{ROM_TYPE[7:4]} | MAP_ACTIVE[3] | (ROM_TYPE[7:6] == 2'b10) |
 
 assign TURBO_ALLOW = ~(MAP_ACTIVE[3] | MAP_ACTIVE[1] | SS_BUSY);
 
-assign BSRAM_RD_N = CPURD_CYC_N;
+assign BSRAM_RD_N = GSU_ACTIVE ? GSU_BSRAM_RD_N : CPURD_CYC_N;
 
 always @(*) begin
 	case (MAP_ACTIVE)

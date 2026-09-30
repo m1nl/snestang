@@ -44,6 +44,8 @@ entity GSUMap is
 		BSRAM_CE_N	: out std_logic;
 		BSRAM_OE_N	: out std_logic;
 		BSRAM_WE_N	: out std_logic;
+		BSRAM_RD_N	: out std_logic;
+		BSRAM_DONE	: in std_logic;
 
 		MAP_ACTIVE  : out std_logic;
 		MAP_CTRL		: in std_logic_vector(7 downto 0);
@@ -54,7 +56,9 @@ entity GSUMap is
 		ROM_REQ     : out std_logic;
 		ROM_OWNED   : out std_logic;
 		ROM_ACCEPT  : in std_logic;
-		ROM_DONE    : in std_logic
+		ROM_DONE    : in std_logic;
+
+		CPURD_CYC_N	: in std_logic
 	);
 end GSUMap;
 
@@ -67,6 +71,7 @@ architecture rtl of GSUMap is
 	signal RAM_A 		: std_logic_vector(16 downto 0);
 	signal RAM_WE_N 	: std_logic;
 	signal MAP_SEL	  	: std_logic;
+	signal GSU_RAM_ACCESS		: std_logic;
 	
 begin
 
@@ -99,12 +104,15 @@ begin
 		RAM_DO		=> BSRAM_D,
 		RAM_WE_N		=> RAM_WE_N,
 		RAM_CE_N		=> BSRAM_CE_N,
+		RAM_DONE		=> BSRAM_DONE,
 				
 		TURBO			=> TURBO,
 		ROM_REQ     => ROM_REQ_I,
 		ROM_OWNED   => ROM_OWNED_I,
 		ROM_ACCEPT  => ROM_ACCEPT,
-		ROM_DONE    => ROM_DONE
+		ROM_DONE    => ROM_DONE,
+
+		GSU_RAM_ACCESS_O => GSU_RAM_ACCESS
 	);
 	ROM_REQ <= ROM_REQ_I and MAP_SEL;
 	ROM_OWNED <= ROM_OWNED_I and MAP_SEL;
@@ -118,5 +126,6 @@ begin
 	BSRAM_ADDR 	<= "0000" & RAM_A(15 downto 0);
 	BSRAM_OE_N 	<= not RAM_WE_N;
 	BSRAM_WE_N 	<= RAM_WE_N;
+	BSRAM_RD_N	<= CPURD_CYC_N when GSU_RAM_ACCESS = '0' else not RAM_WE_N;
 	
 end rtl;

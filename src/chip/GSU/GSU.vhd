@@ -37,7 +37,10 @@ entity GSU is
 		RAM_DI		: in std_logic_vector(7 downto 0);
 		RAM_DO		: out std_logic_vector(7 downto 0);
 		RAM_WE_N		: out std_logic;
-		RAM_CE_N		: out std_logic
+		RAM_CE_N		: out std_logic;
+		RAM_DONE		: in std_logic;
+
+		GSU_RAM_ACCESS_O		: out std_logic
 	);
 end GSU;
 
@@ -306,6 +309,7 @@ begin
 	                     (ROMST = ROMST_FETCH and IN_CACHE = '0')) and
 	                    ROM_REQUESTED = '0' and ROM_DATA_READY = '0' else '0';
 	GSU_RAM_ACCESS <= GSU_MEM_ACCESS and RAN;
+	GSU_RAM_ACCESS_O <= GSU_RAM_ACCESS;
 	
 	
 	SFR <= FLAG_IRQ & "0" & "0" & FLAG_B & "0" & "0" & FLAG_ALT2 & FLAG_ALT1 & "0" & FLAG_R & FLAG_GO & FLAG_OV & FLAG_S & FLAG_CY & FLAG_Z & "0";
@@ -390,8 +394,8 @@ begin
 	
 	RAM_WE_N <= '1' when ENABLE = '0' else 
 					WR_N when GSU_RAM_ACCESS = '0' else 
-					'0' when RAMST = RAMST_SAVE and RAM_LAST_CYCLE = '1' and GSU_RAM_ACCESS = '1' and EN = '1' else 
-					not PCF_RW when RAMST = RAMST_PCF and RAM_LAST_CYCLE = '1' and GSU_RAM_ACCESS = '1' else 
+					'0' when RAMST = RAMST_SAVE and GSU_RAM_ACCESS = '1' and EN = '1' else 
+					not PCF_RW when RAMST = RAMST_PCF and GSU_RAM_ACCESS = '1' else 
 					'1';
 
 	RAM_CE_N <= '0' when ENABLE = '0' else 
@@ -685,7 +689,7 @@ begin
 		end if;
 	end process;
 	
-	RAM_LAST_CYCLE <= '1' when RAM_ACCESS_CNT = 0 else '0'; 
+	RAM_LAST_CYCLE <= '1' when RAM_ACCESS_CNT = 0 and RAM_DONE = '1' else '0'; 
 	process(CLK, RST_N)
 		variable RAM_CYCLES : unsigned(2 downto 0);
 	begin
@@ -819,13 +823,14 @@ begin
 				end if;
 
 				if RAMST /= RAMST_IDLE and RAN = '1' then
-					RAM_ACCESS_CNT <= RAM_ACCESS_CNT - 1;
-					if RAM_ACCESS_CNT = 0 then
+					if RAM_LAST_CYCLE = '1' then
 						if RAMST = RAMST_CACHE or RAMST = RAMST_LOAD or RAMST = RAMST_SAVE then
 							RAM_ACCESS_CNT <= RAM_CYCLES - 1;
 						else
 							RAM_ACCESS_CNT <= RAM_CYCLES;
 						end if;
+					elsif RAM_ACCESS_CNT /= 0 then
+						RAM_ACCESS_CNT <= RAM_ACCESS_CNT - 1;
 					end if;
 				else
 					RAM_ACCESS_CNT <= RAM_CYCLES;

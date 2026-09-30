@@ -291,6 +291,7 @@ wire        BSRAM_OE_N;
 wire        BSRAM_WE_N;
 wire        BSRAM_RD_N;
 wire  [7:0] BSRAM_Q;
+wire        BSRAM_DONE;
 wire  [7:0] BSRAM_D;
 
 wire [15:0] VRAM1_ADDR;
@@ -457,7 +458,7 @@ main #(
 
     .BSRAM_ADDR(BSRAM_ADDR), .BSRAM_D(BSRAM_D),	.BSRAM_Q(BSRAM_Q),
     .BSRAM_CE_N(BSRAM_CE_N), .BSRAM_OE_N(BSRAM_OE_N), .BSRAM_WE_N(BSRAM_WE_N),
-    .BSRAM_RD_N(BSRAM_RD_N),
+    .BSRAM_RD_N(BSRAM_RD_N), .BSRAM_DONE(BSRAM_DONE),
 
     .WRAM_ADDR(WRAM_ADDR), .WRAM_D(WRAM_D),	.WRAM_Q(WRAM_Q),
     .WRAM_CE_N(WRAM_CE_N), .WRAM_OE_N(WRAM_OE_N), .WRAM_WE_N(WRAM_WE_N),
@@ -536,6 +537,14 @@ reg         bsram_word_valid;
 wire        bsram_rv_write_done;
 wire        bsram_rd = ~BSRAM_CE_N & (~BSRAM_RD_N || rom_type[7:4] == 4'hC);
 wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
+wire        bsram_done;
+
+`ifdef BSRAM_BRAM
+wire        bsram_read_miss = BSRAM_ADDR != bsram_addr || !bsram_rd_r;
+`else
+wire        bsram_read_miss = !bsram_word_valid || BSRAM_ADDR[19:1] != bsram_addr[19:1];
+`endif
+wire        bsram_write_request = bsram_wr && (!bsram_wr_r || BSRAM_ADDR != bsram_addr);
 
 reg         aram_req;
 wire        aram_req_ack;
@@ -557,6 +566,51 @@ assign BSRAM_Q = BSRAM_ADDR[0] ? bsram_word[15:8] : bsram_word[7:0];
 `endif
 
 assign ARAM_Q = ARAM_ADDR[0] ? aram_word[15:8] : aram_word[7:0];
+
+`ifdef BSRAM_BRAM
+assign BSRAM_DONE = 1'b1;
+`else
+reg bsram_done_r;
+reg bsram_inflight;
+
+assign BSRAM_DONE = (bsram_done_r == bsram_done);
+
+always @(posedge mclk) begin
+   if (!resetn) begin
+        bsram_done_r <= bsram_done;
+        bsram_inflight <= 0;
+
+    end else begin
+        if (bsram_write_request) begin
+            $display("BSRAM WRITE");
+            if (bsram_inflight)
+                $display("CONFLICT");
+            else begin
+                bsram_done_r <= ~bsram_done_r;
+                bsram_inflight <= 1;
+            end
+
+        end else if (bsram_rd && ~bsram_read_miss) begin
+            /* no-op */
+
+        end else if (bsram_rd && bsram_read_miss) begin
+            $display("BSRAM READ %x %d %d", BSRAM_ADDR, bsram_done_r, bsram_req);
+            if (bsram_inflight)
+                $display("CONFLICT");
+            else begin
+                bsram_done_r <= ~bsram_done_r;
+                bsram_inflight <= 1;
+            end
+        end
+
+        // BSRAM acknowledge
+        if (BSRAM_DONE && bsram_inflight) begin
+            $display("BSRAM ACK");
+            bsram_inflight <= 0;
+        end
+    end
+end
+`endif
 
 // The GSU uses its own SDRAM request and data path for ROM access.
 `ifdef CHIP_GSU
@@ -805,9 +859,11 @@ sdram_snes sdram(
 `ifdef BSRAM_BRAM
     .bsram_addr(20'b0), .bsram_din(8'b0), .bsram_dout(),
     .bsram_req(1'b0), .bsram_req_ack(), .bsram_we(1'b0),
+    .bsram_done(),
 `else
     .bsram_addr(bsram_addr_sd), .bsram_din(bsram_din), .bsram_dout(bsram_word),
     .bsram_req(bsram_req), .bsram_req_ack(bsram_req_ack), .bsram_we(bsram_wr_r),
+    .bsram_done(bsram_done),
 `endif
 
     // ARAM accesses

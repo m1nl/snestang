@@ -42,7 +42,7 @@ module bsram_cache (
 
     localparam [3:0] CLEAR = 0, IDLE = 1, LOOKUP = 2, WRITEBACK = 3,
                      WAIT_WRITEBACK = 4, FILL = 5, WAIT_FILL = 6,
-                     ALLOCATE = 7, RESPOND = 8, PRIME = 9;
+                     ALLOCATE = 7, WAIT_RESPOND = 8, RESPOND = 9, PRIME = 10;
     reg [3:0] state;
 
     assign dbg_state = state;
@@ -163,7 +163,7 @@ module bsram_cache (
                     meta[pending_addr[10:1]] <=
                         {pending_addr[19:11], partial_fill ? pending_meta[3:2] : 2'b00, 2'b11};
                     front_dout <= pending_addr[0] ? merged[15:8] : merged[7:0];
-                    state <= RESPOND;
+                    state <= WAIT_RESPOND;
                 end
 
                 ALLOCATE: begin
@@ -171,8 +171,10 @@ module bsram_cache (
                         {pending_addr[19:11], byte_mask, byte_mask};
                     data[pending_addr[10:1]] <= pending_addr[0] ?
                         {pending_din, 8'b0} : {8'b0, pending_din};
-                    state <= RESPOND;
+                    state <= WAIT_RESPOND;
                 end
+
+                WAIT_RESPOND: state <= RESPOND;
 
                 RESPOND: begin
                     front_done <= ~front_done;

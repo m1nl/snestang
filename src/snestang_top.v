@@ -571,7 +571,7 @@ bsram_cache bsram_cache_inst (
 `else
 wire bsram_cache_busy = 1'b0;
 `endif
-wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_OE_N; // ~BSRAM_RD_N;
+wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_RD_N;
 wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
 reg         bsram_rd_r, bsram_wr_r;
 // bsram_rd_r records a read issued for the current bus cycle/address.

@@ -61,6 +61,7 @@ if {$dev eq "nano20k"} {
     add_file -type verilog "src/mistle_gw5a_25/gowin_pll_hdmi.v"
     add_file -type verilog "src/mistle_gw5a_25/gowin_pll_snes.v"
     add_file -type verilog "src/sdram_cl2_3ch.v"
+    add_file -type verilog "src/bsram_cache.v"
     add_file -type verilog "src/mistle/mcu_spi.v"
     add_file -type verilog "src/mistle/hid.v"
     set_option -output_base_name snestang_${dev}

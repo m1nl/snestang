@@ -94,10 +94,12 @@ module sdram_snes
     input       [1:0] cpu_ds,       // which bytes to enable
 
     input      [19:0] bsram_addr,   // only [16:0], max 128KB
-    input       [7:0] bsram_din,    // byte access
+    input      [15:0] bsram_din,
+    input       [1:0] bsram_ds,
     output wire [15:0] bsram_dout,
     input             bsram_req,
     output reg        bsram_req_ack,
+    output reg        bsram_done,
     input             bsram_we,
 
     // ARAM access uses bank 2
@@ -275,8 +277,8 @@ always @(*) begin
     end else if (bsram_req ^ bsram_req_ack) begin
         next_port[0] = PORT_BSRAM;
         next_addr[0] = { 2'b01, 3'b011, bsram_addr };   // BSRAM at physical 3MB in bank 1
-        next_din[0] = { bsram_din, bsram_din };
-        next_ds[0] = {bsram_addr[0], ~bsram_addr[0]};
+        next_din[0] = bsram_din;
+        next_ds[0] = bsram_ds;
         next_we[0] = bsram_we;
         next_oe[0] = ~bsram_we;
     end else if (need_refresh) begin
@@ -378,6 +380,7 @@ always @(posedge clk, negedge resetn) begin
     if (~resetn) begin
         normal <= 0;
         setup <= 0;
+        bsram_done <= 0;
         refresh_cnt <= 0;
         dq_oen <= 1;
         SDRAM_DQM <= 2'b0;
@@ -506,7 +509,10 @@ always @(posedge clk, negedge resetn) begin
             if (cycle[2]) begin
                 case (port[0])
                 PORT_CPU:   cpu_req_ack <= cpu_req;
-                PORT_BSRAM: bsram_req_ack <= bsram_req;
+                PORT_BSRAM: begin
+                    bsram_req_ack <= bsram_req;
+                    if (we_latch[0]) bsram_done <= ~bsram_done;
+                end
                 PORT_RV:    rv_req_ack <= rv_req;
                 default: ;
                 endcase
@@ -558,6 +564,9 @@ always @(posedge clk, negedge resetn) begin
                 default: ;
                 endcase
             end
+
+            if (cycle[7] && oe_latch[0] && ~we_latch[0] && port[0] == PORT_BSRAM)
+                bsram_done <= ~bsram_done;
 
             // ARAM
             if (cycle[6] && oe_latch[1]) aram_dout <= dq_in;

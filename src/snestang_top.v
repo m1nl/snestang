@@ -534,7 +534,6 @@ wire [7:0]  bsram_dout;
 wire [15:0] bsram_word;
 reg         bsram_wr_r;
 reg         bsram_word_valid;
-wire        bsram_rv_write_done;
 wire        bsram_rd = ~BSRAM_CE_N & (~BSRAM_RD_N || rom_type[7:4] == 4'hC);
 wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
 wire        bsram_done;
@@ -545,6 +544,40 @@ wire        bsram_read_miss = BSRAM_ADDR != bsram_addr || !bsram_rd_r;
 wire        bsram_read_miss = !bsram_word_valid || BSRAM_ADDR[19:1] != bsram_addr[19:1];
 `endif
 wire        bsram_write_request = bsram_wr && (!bsram_wr_r || BSRAM_ADDR != bsram_addr);
+
+`ifndef BSRAM_BRAM
+wire [19:0] bsram_sd_addr;
+wire [15:0] bsram_sd_din;
+wire [15:0] bsram_sd_word;
+wire [1:0]  bsram_sd_ds;
+wire        bsram_sd_we;
+wire        bsram_sd_req;
+wire        bsram_sd_ack;
+wire        bsram_sd_done;
+wire        bsram_cache_busy;
+wire  [2:0] bsram_cache_state;
+
+bsram_cache bsram_cache_inst (
+    .clk(fclk), .resetn(resetn),
+    .front_addr(bsram_addr), .front_din(bsram_din),
+    .front_we(bsram_wr), .front_req(bsram_req),
+    .front_ack(bsram_req_ack), .front_done(bsram_done),
+    .front_dout(bsram_dout), .busy(bsram_cache_busy),
+    .sd_addr(bsram_sd_addr), .sd_din(bsram_sd_din),
+    .sd_ds(bsram_sd_ds), .sd_we(bsram_sd_we), .sd_req(bsram_sd_req),
+    .sd_ack(bsram_sd_ack), .sd_done(bsram_sd_done), .sd_dout(bsram_sd_word),
+    .dbg_state(bsram_cache_state)
+);
+`else
+wire bsram_cache_busy = 1'b0;
+`endif
+wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_OE_N; // ~BSRAM_RD_N;
+wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
+reg         bsram_rd_r, bsram_wr_r;
+// bsram_rd_r records a read issued for the current bus cycle/address.
+// Leave it clear while the cache is busy so a held read can issue later.
+wire        bsram_write_request = bsram_wr && (!bsram_wr_r || BSRAM_ADDR != bsram_addr) && !bsram_cache_busy;
+wire        bsram_read_request = bsram_rd && (!bsram_rd_r || BSRAM_ADDR != bsram_addr) && !bsram_cache_busy;
 
 reg         aram_req;
 wire        aram_req_ack;
@@ -558,12 +591,7 @@ wire        aram_wr = ~ARAM_CE_N & ~ARAM_WE_N;
 
 assign ROM_Q  = (ROM_WORD || ~ROM_ADDR[0]) ? cpu_port0 : { cpu_port0[7:0], cpu_port0[15:8] };
 assign WRAM_Q = WRAM_ADDR[0] ? cpu_port1[15:8] : cpu_port1[7:0];
-
-`ifdef BSRAM_BRAM
 assign BSRAM_Q = bsram_dout;
-`else
-assign BSRAM_Q = BSRAM_ADDR[0] ? bsram_word[15:8] : bsram_word[7:0];
-`endif
 
 assign ARAM_Q = ARAM_ADDR[0] ? aram_word[15:8] : aram_word[7:0];
 
@@ -582,32 +610,21 @@ always @(posedge mclk) begin
 
     end else begin
         if (bsram_write_request) begin
-            $display("BSRAM WRITE");
-            if (bsram_inflight)
-                $display("CONFLICT");
-            else begin
-                bsram_done_r <= ~bsram_done_r;
-                bsram_inflight <= 1;
-            end
+            $display("BSRAM WRITE addr=%x done=%d done_r=%d req=%d req_ack=%d busy=%d inflight=%d state=%d", BSRAM_ADDR, bsram_done, bsram_done_r, bsram_req, bsram_req_ack, bsram_cache_busy, bsram_inflight, bsram_cache_state);
+            bsram_done_r <= ~bsram_done_r;
 
-        end else if (bsram_rd && ~bsram_read_miss) begin
-            /* no-op */
-
-        end else if (bsram_rd && bsram_read_miss) begin
-            $display("BSRAM READ %x %d %d", BSRAM_ADDR, bsram_done_r, bsram_req);
-            if (bsram_inflight)
-                $display("CONFLICT");
-            else begin
-                bsram_done_r <= ~bsram_done_r;
-                bsram_inflight <= 1;
-            end
+        end else if (bsram_read_request) begin
+            $display("BSRAM READ  addr=%x done=%d done_r=%d req=%d req_ack=%d busy=%d inflight=%d state=%d", BSRAM_ADDR, bsram_done, bsram_done_r, bsram_req, bsram_req_ack, bsram_cache_busy, bsram_inflight, bsram_cache_state);
+            bsram_done_r <= ~bsram_done_r;
         end
-
         // BSRAM acknowledge
         if (BSRAM_DONE && bsram_inflight) begin
-            $display("BSRAM ACK");
+            $display("BSRAM ACK   addr=%x done=%d done_r=%d req=%d req_ack=%d busy=%d inflight=%d state=%d", BSRAM_ADDR, bsram_done, bsram_done_r, bsram_req, bsram_req_ack, bsram_cache_busy, bsram_inflight, bsram_cache_state);
             bsram_inflight <= 0;
         end
+        // A new request on this edge supersedes completion of the old one.
+        if (bsram_write_request || bsram_read_request)
+            bsram_inflight <= 1;
     end
 end
 `endif
@@ -677,8 +694,6 @@ always @(posedge mclk) begin
         if (!wram_wr) wram_wr_r <= 0;
         if (!bsram_wr) bsram_wr_r <= 0;
         if (!aram_wr) aram_wr_r <= 0;
-
-        if (bsram_rv_write_done) bsram_word_valid <= 0;
 
         if (cpu_req == cpu_req_ack) begin
             if ((loading  && loader_do_valid && loader_do_ready && header_finished && loader_addr[0]) ||
@@ -762,12 +777,6 @@ reg [1:0]   rv_ds;
 reg         rv_new_req;
 wire        rv_write = |rv_wstrb;
 wire        rv_new_req_t = rv_valid & ~rv_valid_r;
-`ifdef MCU_BL616
-assign      bsram_rv_write_done = 1'b0;
-`else
-assign      bsram_rv_write_done = rv_ready && rv_write;
-`endif
-
 `ifdef BSRAM_BRAM
 // IOSys maps 0x700000-0x7fffff to BSRAM. The 64 KiB block RAM mirrors
 // throughout that window, as it does for the SNES BSRAM address port.
@@ -861,9 +870,9 @@ sdram_snes sdram(
     .bsram_req(1'b0), .bsram_req_ack(), .bsram_we(1'b0),
     .bsram_done(),
 `else
-    .bsram_addr(bsram_addr_sd), .bsram_din(bsram_din), .bsram_dout(bsram_word),
-    .bsram_req(bsram_req), .bsram_req_ack(bsram_req_ack), .bsram_we(bsram_wr_r),
-    .bsram_done(bsram_done),
+    .bsram_addr(bsram_sd_addr), .bsram_din(bsram_sd_din), .bsram_dout(bsram_sd_word),
+    .bsram_req(bsram_sd_req), .bsram_req_ack(bsram_sd_ack), .bsram_we(bsram_sd_we),
+    .bsram_ds(bsram_sd_ds), .bsram_done(bsram_sd_done),
 `endif
 
     // ARAM accesses

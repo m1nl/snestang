@@ -31,7 +31,6 @@ module bsram_cache (
     reg [19:0] pending_addr;
     reg [7:0]  pending_din;
     reg        pending_we;
-    reg        partial_fill;
     reg        sd_done_seen;
 
     wire  [1:0] byte_mask = pending_addr[0] ? 2'b10 : 2'b01;
@@ -45,9 +44,11 @@ module bsram_cache (
 
     reg  [9:0] index;
 
+    wire tag_match = tag == pending_tag;
+
     wire [15:0] merged = {
-        (tag == pending_tag) && valid[1] ? data_q[15:8] : sd_dout[15:8],
-        (tag == pending_tag) && valid[0] ? data_q[ 7:0] : sd_dout[ 7:0]
+        tag_match && valid[1] ? data_q[15:8] : sd_dout[15:8],
+        tag_match && valid[0] ? data_q[ 7:0] : sd_dout[ 7:0]
     };
 
     localparam [3:0] CLEAR = 0, IDLE = 1, LOOKUP = 2, WRITEBACK = 3,
@@ -80,7 +81,7 @@ module bsram_cache (
                     index = clear_index;
                 end
                 READ: ;
-                LOOKUP: if (tag == pending_tag && pending_we) begin
+                LOOKUP: if (tag_match && pending_we) begin
                     data_we = 1;
                     data_din = block ? {pending_din, data_q[7:0]} : {data_q[15:8], pending_din};
                     meta_we = 1;
@@ -90,7 +91,7 @@ module bsram_cache (
                     data_we = 1;
                     data_din = merged;
                     meta_we = 1;
-                    meta_din = {pending_tag, partial_fill ? dirty : 2'b00, 2'b11};
+                    meta_din = {pending_tag, tag_match ? dirty : 2'b00, 2'b11};
                 end
                 ALLOCATE: begin
                     data_we = 1;
@@ -132,7 +133,6 @@ module bsram_cache (
             pending_addr <= 0;
             pending_din <= 0;
             pending_we <= 0;
-            partial_fill <= 0;
             clear_index <= 0;
             state <= CLEAR;
         end else begin
@@ -160,19 +160,16 @@ module bsram_cache (
                 end
 
                 LOOKUP: begin
-                    if (tag == pending_tag &&
-                        (pending_we || (block ? valid[1] : valid[0]))) begin
+                    if (tag_match && (pending_we || (block ? valid[1] : valid[0]))) begin
                         if (!pending_we) begin
                             front_dout <= block ? data_q[15:8] : data_q[7:0];
                         end
                         state <= RESPOND;
                     end else if (tag != pending_tag && |dirty) begin
-                        partial_fill <= 0;
                         state <= WRITEBACK;
                     end else if (pending_we) begin
                         state <= ALLOCATE;
                     end else begin
-                        partial_fill <= (tag == pending_tag);
                         state <= FILL;
                     end
                 end

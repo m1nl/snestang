@@ -33,7 +33,7 @@ module bsram_cache (
     reg        pending_we;
     reg        sd_done_seen;
 
-    wire  [1:0] byte_mask = pending_addr[0] ? 2'b10 : 2'b01;
+    wire [1:0] byte_mask = pending_addr[0] ? 2'b10 : 2'b01;
 
     wire [8:0] pending_tag = pending_addr[19:11];
 
@@ -164,7 +164,7 @@ module bsram_cache (
                         if (!pending_we) begin
                             front_dout <= block ? data_q[15:8] : data_q[7:0];
                         end
-                        state <= RESPOND;
+                        state <= WAIT_RESPOND;
                     end else if (tag != pending_tag && |dirty) begin
                         state <= WRITEBACK;
                     end else if (pending_we) begin
@@ -206,7 +206,8 @@ module bsram_cache (
                 end
 
                 ALLOCATE: begin
-                    state <= WAIT_RESPOND;
+                    front_done <= ~front_done;
+                    state <= IDLE;
                 end
 
                 WAIT_RESPOND: state <= RESPOND;
@@ -215,6 +216,7 @@ module bsram_cache (
                     front_done <= ~front_done;
                     state <= IDLE;
                 end
+
                 default: state <= CLEAR;
             endcase
         end

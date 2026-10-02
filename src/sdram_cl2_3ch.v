@@ -384,6 +384,13 @@ always @(posedge clk, negedge resetn) begin
         refresh_cnt <= 0;
         dq_oen <= 1;
         SDRAM_DQM <= 2'b0;
+        cpu_req_ack <= 0;
+        bsram_req_ack <= 0;
+        aram_req_ack <= 0;
+        rv_req_ack <= 0;
+        vram1_ack <= 0;
+        vram2_ack <= 0;
+
     end else begin
         // defaults
         dq_oen <= 1'b1;
@@ -400,7 +407,7 @@ always @(posedge clk, negedge resetn) begin
                 a[10] <= 1'b1;
             end
             if (setup == T_RP) begin
-                // 1st AutoRefresh
+        // 1st AutoRefresh
                 cmd <= CMD_AutoRefresh;
             end
             if (setup == T_RP+T_RC) begin

@@ -99,13 +99,6 @@ module sdram_snes_gsu
     input             cpu_we,
     input       [1:0] cpu_ds,       // which bytes to enable
 
-    // GSU ROM reads use a 16-bit word address and return the full word.
-    input      [22:1] gsu_addr,
-    input             gsu_req,
-    output reg        gsu_req_ack,
-    output reg        gsu_done,
-    output reg [15:0] gsu_dout,
-
     input      [19:0] bsram_addr,   // only [16:0], max 128KB
     input      [15:0] bsram_din,
     input       [1:0] bsram_ds,
@@ -114,6 +107,13 @@ module sdram_snes_gsu
     output reg        bsram_req_ack,
     output reg        bsram_done,
     input             bsram_we,
+
+    // GSU ROM reads use a 16-bit word address and return the full word.
+    input      [22:1] gsu_addr,
+    input             gsu_req,
+    output reg        gsu_req_ack,
+    output reg        gsu_done,
+    output reg [15:0] gsu_dout,
 
     // ARAM access uses bank 2
     input      [15:0] aram_addr,
@@ -412,13 +412,14 @@ always @(posedge clk, negedge resetn) begin
         SDRAM_DQM <= 2'b0;
         cpu_req_ack <= 0;
         bsram_req_ack <= 0;
-        bsram_done <= 0;
         aram_req_ack <= 0;
+        gsu_req_ack <= 0;
+        rv_req_ack <= 0;
         vram1_ack <= 0;
         vram2_ack <= 0;
-        rv_req_ack <= 0;
-        gsu_req_ack <= 0;
+        bsram_done <= 0;
         gsu_done <= 0;
+
     end else begin
         // defaults
         dq_oen <= 1'b1;

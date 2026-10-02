@@ -52,13 +52,7 @@ module bsram_cache (
         meta_q <= meta[front_addr[10:1]];
     assign busy = (state != IDLE) || (front_req != front_ack);
 
-    reg [3:0] state_old;
-
     always @(posedge clk) begin
-        state_old <= state;
-
-        if (state != state_old) $display("STATE %d", state);
-
         if (!resetn) begin
             front_ack <= 0;
             front_done <= 0;

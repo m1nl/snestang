@@ -528,21 +528,14 @@ wire        wram_wr = ~WRAM_CE_N & ~WRAM_WE_N;
 
 reg         bsram_req;
 wire        bsram_req_ack;
-reg [19:0]  bsram_addr_sd;
-reg [7:0]   bsram_din;
-wire [7:0]  bsram_dout;
+reg  [19:0] bsram_addr_sd;
+reg   [7:0] bsram_din;
+wire  [7:0] bsram_dout;
 wire [15:0] bsram_word;
 reg         bsram_wr_r;
-reg         bsram_word_valid;
 wire        bsram_rd = ~BSRAM_CE_N & (~BSRAM_RD_N || rom_type[7:4] == 4'hC);
 wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
 wire        bsram_done;
-
-`ifdef BSRAM_BRAM
-wire        bsram_read_miss = BSRAM_ADDR != bsram_addr_sd;
-`else
-wire        bsram_read_miss = !bsram_word_valid || BSRAM_ADDR[19:1] != bsram_addr_sd[19:1];
-`endif
 
 `ifndef BSRAM_BRAM
 wire [19:0] bsram_sd_addr;
@@ -559,7 +552,7 @@ wire  [2:0] bsram_cache_state;
 bsram_cache bsram_cache_inst (
     .clk(fclk), .resetn(resetn),
     .front_addr(bsram_addr_sd), .front_din(bsram_din),
-    .front_we(bsram_wr), .front_req(bsram_req),
+    .front_we(bsram_wr_r), .front_req(bsram_req),
     .front_ack(bsram_req_ack), .front_done(bsram_done),
     .front_dout(bsram_dout), .busy(bsram_cache_busy),
     .sd_addr(bsram_sd_addr), .sd_din(bsram_sd_din),
@@ -572,8 +565,8 @@ wire bsram_cache_busy = 1'b0;
 `endif
 
 // Leave it clear while the cache is busy so a held read can issue later.
-wire        bsram_write_request = (bsram_wr && !bsram_wr_r) || (BSRAM_ADDR != bsram_addr_sd) && !bsram_cache_busy;
-wire        bsram_read_request = bsram_rd && (BSRAM_ADDR != bsram_addr_sd) && !bsram_cache_busy;
+wire        bsram_write_request = ((bsram_wr && (BSRAM_ADDR != bsram_addr_sd)) || (bsram_wr && ~bsram_wr_r)) && !bsram_cache_busy;
+wire        bsram_read_request  =  (bsram_rd && (BSRAM_ADDR != bsram_addr_sd)) && !bsram_cache_busy;
 
 reg         aram_req;
 wire        aram_req_ack;
@@ -683,8 +676,10 @@ always @(posedge mclk) begin
         aram_wr_r <= 0;
         rom_word_valid <= 0;
         wram_word_valid <= 0;
-        bsram_word_valid <= 0;
         aram_word_valid <= 0;
+        cpu_req <= 0;
+        bsram_req <= 0;
+        aram_req <=0;
 
     end else begin
         if (!wram_wr) wram_wr_r <= 0;
@@ -721,17 +716,12 @@ always @(posedge mclk) begin
             end
         end
 
-        if (bsram_req == bsram_req_ack) begin
-            if ((bsram_rd && (BSRAM_ADDR[19:1] != bsram_addr_sd[19:1] || !bsram_word_valid)) ||
-                (bsram_wr && (BSRAM_ADDR[19:0] != bsram_addr_sd[19:0])) ||
-                (bsram_wr && ~bsram_wr_r)) begin
-                bsram_addr_sd <= BSRAM_ADDR;
-                bsram_word_valid <= ~bsram_wr;
-                bsram_wr_r <= bsram_wr;
+        if (bsram_read_request || bsram_write_request) begin
+            bsram_addr_sd <= BSRAM_ADDR;
+            bsram_wr_r <= bsram_wr;
 
-                bsram_req <= ~bsram_req;
-                bsram_din <= BSRAM_D;
-            end
+            bsram_req <= ~bsram_req;
+            bsram_din <= BSRAM_D;
         end
 
         if (aram_req == aram_req_ack) begin

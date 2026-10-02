@@ -392,10 +392,15 @@ begin
 				 PCF_WR_DATA when RAMST = RAMST_PCF and GSU_RAM_ACCESS = '1' else
 				 DI;
 	
+--	RAM_WE_N <= '1' when ENABLE = '0' else 
+--					WR_N when GSU_RAM_ACCESS = '0' else 
+--					'0' when RAMST = RAMST_SAVE and GSU_RAM_ACCESS = '1' else 
+--					not PCF_RW when RAMST = RAMST_PCF and GSU_RAM_ACCESS = '1' else 
+--					'1';
 	RAM_WE_N <= '1' when ENABLE = '0' else 
 					WR_N when GSU_RAM_ACCESS = '0' else 
-					'0' when RAMST = RAMST_SAVE and GSU_RAM_ACCESS = '1' else 
-					not PCF_RW when RAMST = RAMST_PCF and GSU_RAM_ACCESS = '1' else 
+					'0' when RAMST = RAMST_SAVE and RAM_LAST_CYCLE = '1' and GSU_RAM_ACCESS = '1' and EN = '1' else 
+					not PCF_RW when RAMST = RAMST_PCF and RAM_LAST_CYCLE = '1' and GSU_RAM_ACCESS = '1' else 
 					'1';
 
 	RAM_CE_N <= '0' when ENABLE = '0' else 

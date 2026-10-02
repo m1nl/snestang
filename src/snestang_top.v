@@ -539,11 +539,10 @@ wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
 wire        bsram_done;
 
 `ifdef BSRAM_BRAM
-wire        bsram_read_miss = BSRAM_ADDR != bsram_addr || !bsram_rd_r;
+wire        bsram_read_miss = BSRAM_ADDR != bsram_addr_sd;
 `else
-wire        bsram_read_miss = !bsram_word_valid || BSRAM_ADDR[19:1] != bsram_addr[19:1];
+wire        bsram_read_miss = !bsram_word_valid || BSRAM_ADDR[19:1] != bsram_addr_sd[19:1];
 `endif
-wire        bsram_write_request = bsram_wr && (!bsram_wr_r || BSRAM_ADDR != bsram_addr);
 
 `ifndef BSRAM_BRAM
 wire [19:0] bsram_sd_addr;
@@ -559,7 +558,7 @@ wire  [2:0] bsram_cache_state;
 
 bsram_cache bsram_cache_inst (
     .clk(fclk), .resetn(resetn),
-    .front_addr(bsram_addr), .front_din(bsram_din),
+    .front_addr(bsram_addr_sd), .front_din(bsram_din),
     .front_we(bsram_wr), .front_req(bsram_req),
     .front_ack(bsram_req_ack), .front_done(bsram_done),
     .front_dout(bsram_dout), .busy(bsram_cache_busy),
@@ -571,13 +570,10 @@ bsram_cache bsram_cache_inst (
 `else
 wire bsram_cache_busy = 1'b0;
 `endif
-wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_RD_N;
-wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
-reg         bsram_rd_r, bsram_wr_r;
-// bsram_rd_r records a read issued for the current bus cycle/address.
+
 // Leave it clear while the cache is busy so a held read can issue later.
-wire        bsram_write_request = bsram_wr && (!bsram_wr_r || BSRAM_ADDR != bsram_addr) && !bsram_cache_busy;
-wire        bsram_read_request = bsram_rd && (!bsram_rd_r || BSRAM_ADDR != bsram_addr) && !bsram_cache_busy;
+wire        bsram_write_request = (bsram_wr && !bsram_wr_r) || (BSRAM_ADDR != bsram_addr_sd) && !bsram_cache_busy;
+wire        bsram_read_request = bsram_rd && (BSRAM_ADDR != bsram_addr_sd) && !bsram_cache_busy;
 
 reg         aram_req;
 wire        aram_req_ack;

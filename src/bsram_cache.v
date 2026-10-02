@@ -26,7 +26,6 @@ module bsram_cache (
     reg [15:0] data [0:1023];
     reg [12:0] meta_q;
     reg [15:0] data_q;
-    reg [12:0] pending_meta;
     reg [9:0]  clear_index;
 
     reg [19:0] pending_addr;
@@ -34,19 +33,27 @@ module bsram_cache (
     reg        pending_we;
     reg        partial_fill;
     reg        sd_done_seen;
-    wire [1:0] byte_mask = pending_addr[0] ? 2'b10 : 2'b01;
-    wire [15:0] merged = {
-        partial_fill && pending_meta[1] ? data_q[15:8] : sd_dout[15:8],
-        partial_fill && pending_meta[0] ? data_q[7:0] : sd_dout[7:0]
-    };
 
-    wire [8:0] tag = meta_q[12:4];
+    wire  [1:0] byte_mask = pending_addr[0] ? 2'b10 : 2'b01;
+
+    wire [8:0] pending_tag = pending_addr[19:11];
+
+    wire       block = pending_addr[0];
+    wire [8:0] tag   = meta_q[12:4];
     wire [1:0] dirty = meta_q[3:2];
     wire [1:0] valid = meta_q[1:0];
 
+    reg  [9:0] index;
+
+    wire [15:0] merged = {
+        (tag == pending_tag) && valid[1] ? data_q[15:8] : sd_dout[15:8],
+        (tag == pending_tag) && valid[0] ? data_q[ 7:0] : sd_dout[ 7:0]
+    };
+
     localparam [3:0] CLEAR = 0, IDLE = 1, LOOKUP = 2, WRITEBACK = 3,
                      WAIT_WRITEBACK = 4, FILL = 5, WAIT_FILL = 6,
-                     ALLOCATE = 7, WAIT_RESPOND = 8, RESPOND = 9, PRIME = 10;
+                     ALLOCATE = 7, WAIT_RESPOND = 8, RESPOND = 9, PRIME = 10,
+                     READ = 11;
     reg [3:0] state;
 
     assign dbg_state = state;
@@ -56,27 +63,26 @@ module bsram_cache (
     reg        data_we;
     reg [15:0] data_din;
     reg        meta_we;
-    reg [9:0]  meta_addr;
     reg [12:0] meta_din;
 
     // One full-word write port per RAM. Byte writes preserve the other byte
-    // from the word sampled with the request, avoiding partial RAM writes.
+    // from the word read after latching the request, avoiding partial RAM writes.
     always @* begin
         data_we = 0;
         data_din = 0;
         meta_we = 0;
-        meta_addr = pending_addr[10:1];
+        index = pending_addr[10:1];
         meta_din = 0;
         if (resetn) begin
             case (state)
                 CLEAR: begin
                     meta_we = 1;
-                    meta_addr = clear_index;
+                    index = clear_index;
                 end
-                LOOKUP: if (tag == pending_addr[19:11] && pending_we) begin
+                READ: ;
+                LOOKUP: if (tag == pending_tag && pending_we) begin
                     data_we = 1;
-                    data_din = pending_addr[0] ?
-                        {pending_din, data_q[7:0]} : {data_q[15:8], pending_din};
+                    data_din = block ? {pending_din, data_q[7:0]} : {data_q[15:8], pending_din};
                     meta_we = 1;
                     meta_din = {tag, (dirty | byte_mask), (valid | byte_mask)};
                 end
@@ -84,15 +90,13 @@ module bsram_cache (
                     data_we = 1;
                     data_din = merged;
                     meta_we = 1;
-                    meta_din =
-                        {pending_addr[19:11], partial_fill ? pending_meta[3:2] : 2'b00, 2'b11};
+                    meta_din = {pending_tag, partial_fill ? dirty : 2'b00, 2'b11};
                 end
                 ALLOCATE: begin
                     data_we = 1;
-                    data_din = pending_addr[0] ?
-                        {pending_din, 8'b0} : {8'b0, pending_din};
+                    data_din = block ? {pending_din, 8'b0} : {8'b0, pending_din};
                     meta_we = 1;
-                    meta_din = {pending_addr[19:11], byte_mask, byte_mask};
+                    meta_din = {pending_tag, byte_mask, byte_mask};
                 end
                 default: begin end
             endcase
@@ -100,16 +104,18 @@ module bsram_cache (
     end
 
     // Dedicated synchronous read outputs have no reset or alternate drivers.
-    // They hold the accepted request's word throughout lookup and SDRAM waits.
+    // Read one cycle after acceptance, using the latched address. The outputs
+    // hold the accepted request's word throughout lookup and SDRAM waits.
     always @(posedge clk) begin
-        if (resetn && state == IDLE) begin
+        if (state == READ) begin
             meta_q <= meta[front_addr[10:1]];
             data_q <= data[front_addr[10:1]];
+        end else begin
+            if (meta_we)
+                meta[index] <= meta_din;
+            if (data_we)
+                data[index] <= data_din;
         end
-        if (meta_we)
-            meta[meta_addr] <= meta_din;
-        if (data_we)
-            data[pending_addr[10:1]] <= data_din;
     end
 
     always @(posedge clk) begin
@@ -126,7 +132,6 @@ module bsram_cache (
             pending_addr <= 0;
             pending_din <= 0;
             pending_we <= 0;
-            pending_meta <= 0;
             partial_fill <= 0;
             clear_index <= 0;
             state <= CLEAR;
@@ -141,40 +146,41 @@ module bsram_cache (
 
                 PRIME: state <= IDLE;
 
-                IDLE: begin
-                    if (front_req != front_ack) begin
-                        front_ack <= front_req;
-                        pending_addr <= front_addr;
-                        pending_din <= front_din;
-                        pending_we <= front_we;
-                        front_dout <= front_din;
-                        state <= LOOKUP;
-                    end
+                IDLE: if (front_req != front_ack) begin
+                    state <= READ;
+                end
+
+                READ: begin
+                    front_ack <= front_req;
+                    front_dout <= front_din;
+                    pending_addr <= front_addr;
+                    pending_din <= front_din;
+                    pending_we <= front_we;
+                    state <= LOOKUP;
                 end
 
                 LOOKUP: begin
-                    pending_meta <= meta_q;
-                    if (tag == pending_addr[19:11] &&
-                        (pending_we || (pending_addr[0] ? meta_q[1] : meta_q[0]))) begin
+                    if (tag == pending_tag &&
+                        (pending_we || (block ? valid[1] : valid[0]))) begin
                         if (!pending_we) begin
-                            front_dout <= pending_addr[0] ? data_q[15:8] : data_q[7:0];
+                            front_dout <= block ? data_q[15:8] : data_q[7:0];
                         end
                         state <= RESPOND;
-                    end else if (tag != pending_addr[19:11] && |dirty) begin
+                    end else if (tag != pending_tag && |dirty) begin
                         partial_fill <= 0;
                         state <= WRITEBACK;
                     end else if (pending_we) begin
                         state <= ALLOCATE;
                     end else begin
-                        partial_fill <= (tag == pending_addr[19:11]);
+                        partial_fill <= (tag == pending_tag);
                         state <= FILL;
                     end
                 end
 
                 WRITEBACK: if (sd_req == sd_ack) begin
-                    sd_addr <= {pending_meta[12:4], pending_addr[10:1], 1'b0};
+                    sd_addr <= {tag, index, 1'b0};
                     sd_din <= data_q;
-                    sd_ds <= pending_meta[3:2];
+                    sd_ds <= dirty;
                     sd_we <= 1;
                     sd_done_seen <= sd_done;
                     sd_req <= ~sd_req;
@@ -198,7 +204,7 @@ module bsram_cache (
                 end
 
                 WAIT_FILL: if (sd_done != sd_done_seen) begin
-                    front_dout <= pending_addr[0] ? merged[15:8] : merged[7:0];
+                    front_dout <= block ? merged[15:8] : merged[7:0];
                     state <= WAIT_RESPOND;
                 end
 

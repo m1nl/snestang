@@ -32,6 +32,7 @@ module bsram_cache (
     reg [7:0]  pending_din;
     reg        pending_we;
     reg        sd_done_seen;
+    reg        write_waiting;
 
     wire [1:0] byte_mask = pending_addr[0] ? 2'b10 : 2'b01;
 
@@ -52,7 +53,7 @@ module bsram_cache (
     };
 
     localparam [3:0] CLEAR = 0, IDLE = 1, LOOKUP = 2, WRITEBACK = 3,
-                     WAIT_WRITEBACK = 4, FILL = 5, WAIT_FILL = 6,
+                     FILL = 5, WAIT_FILL = 6,
                      ALLOCATE = 7, RESPOND = 9, PRIME = 10,
                      READ = 11;
     reg [3:0] state;
@@ -93,7 +94,7 @@ module bsram_cache (
                     meta_we = 1;
                     meta_din = {pending_tag, tag_match ? dirty : 2'b00, 2'b11};
                 end
-                ALLOCATE: begin
+                ALLOCATE: if (pending_we) begin
                     data_we = 1;
                     data_din = block ? {pending_din, 8'b0} : {8'b0, pending_din};
                     meta_we = 1;
@@ -107,8 +108,8 @@ module bsram_cache (
     // Dedicated synchronous read outputs have no reset or alternate drivers.
     // READ samples the address and RAMs on the acceptance edge. The outputs
     // hold the accepted request's word throughout lookup and SDRAM waits.
-    // On a dirty read miss these outputs retain the victim even after FILL
-    // replaces the RAM entry. Keep busy asserted until that victim is written back.
+    // These outputs retain a dirty victim after FILL/ALLOCATE replaces the RAM
+    // entry, until WRITEBACK copies the victim into the SDRAM request registers.
     always @(posedge clk) begin
         if (state == READ) begin
             meta_q <= meta[front_addr[10:1]];
@@ -132,12 +133,18 @@ module bsram_cache (
             sd_we <= 0;
             sd_req <= sd_ack;
             sd_done_seen <= sd_done;
+            write_waiting <= 0;
             pending_addr <= 0;
             pending_din <= 0;
             pending_we <= 0;
             clear_index <= 0;
             state <= CLEAR;
         end else begin
+            // Acceptance does not imply completion. Cache hits may proceed while
+            // a writeback is outstanding, but the SDRAM request registers must
+            // remain unchanged until its done toggle has been observed.
+            if (write_waiting && sd_done != sd_done_seen)
+                write_waiting <= 0;
             case (state)
                 CLEAR: begin
                     if (clear_index == 10'd1023)
@@ -167,8 +174,6 @@ module bsram_cache (
                             front_dout <= block ? data_q[15:8] : data_q[7:0];
                         end
                         state <= RESPOND;
-                    end else if (pending_we && !tag_match && |dirty) begin
-                        state <= WRITEBACK;
                     end else if (pending_we) begin
                         state <= ALLOCATE;
                     end else begin
@@ -176,24 +181,18 @@ module bsram_cache (
                     end
                 end
 
-                WRITEBACK: if (sd_req == sd_ack) begin
+                WRITEBACK: if (sd_req == sd_ack && !write_waiting) begin
                     sd_addr <= {tag, index, 1'b0};
                     sd_din <= data_q;
                     sd_ds <= dirty;
                     sd_we <= 1;
                     sd_done_seen <= sd_done;
+                    write_waiting <= 1;
                     sd_req <= ~sd_req;
-                    state <= WAIT_WRITEBACK;
+                    state <= IDLE;
                 end
 
-                WAIT_WRITEBACK: if (sd_done != sd_done_seen) begin
-                    if (pending_we)
-                        state <= ALLOCATE;
-                    else
-                        state <= IDLE;
-                end
-
-                FILL: if (sd_req == sd_ack) begin
+                FILL: if (sd_req == sd_ack && !write_waiting) begin
                     sd_addr <= {pending_addr[19:1], 1'b0};
                     sd_ds <= 2'b11;
                     sd_we <= 0;
@@ -204,22 +203,17 @@ module bsram_cache (
 
                 WAIT_FILL: if (sd_done != sd_done_seen) begin
                     front_dout <= block ? merged[15:8] : merged[7:0];
-                    state <= RESPOND;
+                    state <= ALLOCATE;
                 end
 
                 ALLOCATE: begin
                     front_done <= ~front_done;
-                    state <= IDLE;
+                    state <= (!tag_match && |dirty) ? WRITEBACK : IDLE;
                 end
 
                 RESPOND: begin
                     front_done <= ~front_done;
-                    // Reads complete before eviction writeback. meta_q/data_q
-                    // still contain the old tag, dirty mask and word here.
-                    if (!pending_we && !tag_match && |dirty)
-                        state <= WRITEBACK;
-                    else
-                        state <= IDLE;
+                    state <= IDLE;
                 end
 
                 default: state <= CLEAR;

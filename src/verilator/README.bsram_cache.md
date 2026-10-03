@@ -34,10 +34,10 @@ Coverage includes:
 - Both partial-fill directions, preserving valid dirty bytes while reading the
   missing byte and retaining the dirty mask for subsequent eviction.
 - Low-only, high-only, and both-byte writebacks; eviction of partial words;
-  dirty write conflicts write back before allocation, while dirty read conflicts
-  fill and return the requested byte before writing back the victim.
-- Early read completion with `busy` held until deferred writeback finishes;
-  requests queued during that writeback, including reads of the evicted word.
+  reads fill and writes allocate before completing and writing back the victim.
+- Early read/write completion, requests queued during eviction, and cache hits
+  completing while a writeback is outstanding. Fills and further writebacks must
+  wait for the old write's `done`, even when `req` already matches `ack`.
 - Input changes after front `ack`, requests queued while busy, stable idle
   handshakes, and no duplicate requests/completions.
 - The `IDLE` → `READ` → `LOOKUP` pipeline: `IDLE` detects a request; `READ`
@@ -47,7 +47,7 @@ Coverage includes:
   Writes return the accepted byte at both `ack` and completion.
 - Dirty data discarded by reset and complete invalidation across all indices;
   reset during unacknowledged and accepted-but-incomplete SDRAM fills/writebacks,
-  including deferred writebacks after the read has already completed.
+  including deferred writebacks after the front request has already completed.
 - Random reads/writes, concentrated hotspots, conflicting tags, repeated addresses,
   and full-range addresses with variable controller delays.
 
@@ -65,21 +65,28 @@ the latter mode poisons the data bus to catch premature sampling.
 
 Protocol assertions check stable SDRAM payloads through completion, acceptance
 before completion, no overlapping backend transfers, and front completion after
-the requested fill completes. On dirty read misses, the only remaining transfer
+the requested fill completes. On dirty misses, the only remaining transfer
 at `front_done` must be the deferred victim writeback, which must start after that
-response. No new request may be accepted until writeback finishes. The test
+response. Cache requests may proceed once the victim has been copied into the
+SDRAM request registers, but further SDRAM transactions wait for write completion.
+The test
 requires coverage of every active cache state, every dirty mask (including deferred
 writeback), both request phases, and simultaneous/separate `ack`/`done` timing.
 
 The cache retains the victim in its synchronous metadata/data read outputs while
-the fill replaces the RAM entry. It keeps `busy` asserted through deferred
-writeback so a subsequent RAM read cannot overwrite that snapshot. `front_done`
-therefore means the requested byte is available; it does not always mean the cache
-is ready to accept the next request. The top-level request generator already waits
-for `busy` to clear and qualifies `BSRAM_DONE` against the current address and a
-pending write, preventing a subsequent GSU access from consuming the previous
-read's completion while writeback is still pending. Write misses keep their
-writeback-before-allocation behavior.
+the fill or allocation replaces the RAM entry. It keeps `busy` asserted until
+WRITEBACK copies the victim into the SDRAM request registers, then returns to IDLE
+while `write_waiting` tracks completion independently. Cache hits can finish in
+that interval. Both FILL and WRITEBACK check `!write_waiting` as well as
+`req == ack`, preventing an old write completion from being consumed by a fill.
+Allocation RAM writes are enabled only for writes, so read fills retain their
+data, validity and dirty masks when passing through the completion state.
+
+The top-level request generator waits for `busy` to clear and qualifies
+`BSRAM_DONE` against the current address and a pending write, preventing a
+subsequent GSU access from consuming the previous request's completion while a
+new fill is blocked behind writeback. The default driver drains outstanding
+transfers between ordinary requests; directed cases deliberately overlap them.
 
 This tests the cache's controller interface with a model. It does not instantiate
 the production SDRAM controller or verify SDRAM pins, arbitration, refresh,

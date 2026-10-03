@@ -435,7 +435,8 @@ module tb_bsram_cache;
                 $fatal(1, "Backing memory mismatch at word %h: got %h expected %h%h",
                        i, controller.mem[i], golden[2*i+1], golden[2*i]);
         idle_check();
-        if (states_seen !== 12'hfff || mask_count[1] == 0 || mask_count[2] == 0 || mask_count[3] == 0)
+        // States 8/9 (WAIT_RESPOND/RESPOND) were removed; active states are 0-7, 10-11.
+        if (states_seen !== 12'hcff || mask_count[1] == 0 || mask_count[2] == 0 || mask_count[3] == 0)
             $fatal(1, "Missing state/dirty-mask coverage states=%h masks=%0d/%0d/%0d",
                    states_seen, mask_count[1], mask_count[2], mask_count[3]);
         if (sd_phase_count[0] == 0 || sd_phase_count[1] == 0 ||

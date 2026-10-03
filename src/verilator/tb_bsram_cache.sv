@@ -34,6 +34,7 @@ module tb_bsram_cache;
     reg [15:0] expected_data [0:65535];
     reg [1:0] expected_ds [0:65535];
     reg expected_we [0:65535];
+    reg expected_deferred [0:65535];
     integer head = 0, tail = 0;
     integer operations = 0, reads = 0, writes = 0;
     integer mask_count [0:3];
@@ -45,22 +46,26 @@ module tb_bsram_cache;
     reg front_inflight = 0, sd_inflight = 0, sd_accepted = 0;
     integer simultaneous_completions = 0, separate_completions = 0;
     integer sd_phase_count [0:1];
+    integer deferred_mask_count [0:3];
     integer seed = 1, rng, random_ops = 4000;
     integer i, j, index, tag_number, value;
     reg [19:0] random_addr;
     reg [7:0] expected_byte;
+    reg before_reset_read_done;
+    integer reset_cycles;
 
     task tick;
         @(posedge clk); #2;
     endtask
 
     task enqueue(input bit wr, input [19:0] address,
-                 input [1:0] mask, input [15:0] data_value);
+                 input [1:0] mask, input [15:0] data_value, input bit deferred = 0);
         if (tail == 65536) $fatal(1, "Expected transaction queue overflow");
         expected_we[tail] = wr;
         expected_addr[tail] = address;
         expected_ds[tail] = mask;
         expected_data[tail] = data_value;
+        expected_deferred[tail] = deferred;
         tail = tail + 1;
     endtask
 
@@ -68,15 +73,21 @@ module tb_bsram_cache;
                  input [7:0] data_value, output reg [7:0] result);
         integer slot, new_tag, victim;
         reg [1:0] mask;
+        reg [1:0] victim_dirty;
+        reg [15:0] victim_data;
         begin
             slot = int'(address[10:1]);
             new_tag = int'(address[19:11]);
             mask = address[0] ? 2'b10 : 2'b01;
+            victim_dirty = 0;
+            victim = 0;
+            victim_data = 0;
             if (tags[slot] != new_tag) begin
                 if (dirty_bytes[slot] != 0) begin
                     victim = tags[slot] * 2048 + slot * 2;
-                    enqueue(1, 20'(victim), dirty_bytes[slot],
-                            {golden[victim+1], golden[victim]});
+                    victim_dirty = dirty_bytes[slot];
+                    victim_data = {golden[victim+1], golden[victim]};
+                    if (wr) enqueue(1, 20'(victim), victim_dirty, victim_data);
                 end
                 tags[slot] = new_tag;
                 valid_bytes[slot] = 0;
@@ -93,6 +104,8 @@ module tb_bsram_cache;
                     valid_bytes[slot] = 2'b11;
                 end
                 result = golden[address];
+                if (victim_dirty != 0)
+                    enqueue(1, 20'(victim), victim_dirty, victim_data, 1);
             end
         end
     endtask
@@ -122,6 +135,8 @@ module tb_bsram_cache;
                 sd_accepted = 0;
                 sd_phase_count[sd_req] = sd_phase_count[sd_req] + 1;
                 if (head == tail) $fatal(1, "Unexpected SDRAM transaction at %h", sd_addr);
+                if (expected_deferred[head] && front_inflight)
+                    $fatal(1, "Read eviction writeback issued before front_done");
                 if ({sd_we, sd_addr, sd_ds} !==
                     {expected_we[head], expected_addr[head], expected_ds[head]})
                     $fatal(1, "Transfer %0d got we/addr/ds=%b/%h/%b expected %b/%h/%b",
@@ -151,6 +166,7 @@ module tb_bsram_cache;
                 sd_inflight = 0;
             end
             if (front_ack !== last_front_ack) begin
+                if (sd_inflight) $fatal(1, "Front request accepted during deferred writeback");
                 if (dbg_state !== 4'd2 || previous_state !== 4'd11)
                     $fatal(1, "Accepted request must enter LOOKUP from READ");
                 if (front_inflight || front_ack !== front_req)
@@ -162,6 +178,11 @@ module tb_bsram_cache;
             if (front_done !== last_front_done) begin
                 if (!front_inflight || sd_inflight)
                     $fatal(1, "Front done without acceptance or before SDRAM completion");
+                if (head != tail) begin
+                    if (tail-head != 1 || !expected_deferred[head] || !busy)
+                        $fatal(1, "Only deferred victim writeback may remain at front_done");
+                    deferred_mask_count[expected_ds[head]] = deferred_mask_count[expected_ds[head]] + 1;
+                end
                 front_inflight = 0;
             end
             last_sd_ack = sd_ack; last_sd_done = sd_done;
@@ -178,14 +199,20 @@ module tb_bsram_cache;
                 tick();
                 cycles = cycles + 1;
             end
-            while (busy) begin
-                tick();
-            end
             if (front_done === previous_done) $fatal(1, "Front completion timeout state=%0d", dbg_state);
             if (front_dout !== result)
                 $fatal(1, "Front data got %h expected %h, operation %0d", front_dout, result, operations);
-            if (head != tail) $fatal(1, "Front completed before expected SDRAM requests");
             if (controller.active) $fatal(1, "Front completed before SDRAM done");
+            cycles = 0;
+            while (busy && cycles < 200) begin
+                tick();
+                cycles = cycles + 1;
+                if (front_done !== ~previous_done || front_dout !== result)
+                    $fatal(1, "Read response changed during deferred writeback");
+            end
+            if (busy) $fatal(1, "Deferred writeback drain timeout");
+            if (head != tail || controller.active)
+                $fatal(1, "Cache became idle before expected SDRAM transfers finished");
             operations = operations + 1;
         end
     endtask
@@ -221,9 +248,6 @@ module tb_bsram_cache;
             front_din = ~data_value;
             front_we = ~wr;
             wait_complete(previous_done, result);
-            while (busy) begin
-                tick();
-            end
             if (front_ack !== requested_phase || busy)
                 $fatal(1, "Incorrect ack/busy after completion");
         end
@@ -312,11 +336,61 @@ module tb_bsram_cache;
         end
     endtask
 
+    task deferred_read_case(input [1:0] mask);
+        reg [19:0] victim_address, fill_address;
+        reg [7:0] result, queued_result;
+        reg previous_done, first_phase, queued_phase;
+        integer cycles;
+        begin
+            victim_address = 20'h22080 + 20'(4*mask);
+            fill_address = victim_address + 20'h800;
+            ack_delay = 0; done_delay = 0;
+            if (mask[0]) transact(1, victim_address, 8'hb6);
+            if (mask[1]) transact(1, victim_address+1, 8'hd9);
+            ack_delay = 8; done_delay = 16;
+            predict(0, fill_address+1, 0, result);
+            previous_done = front_done;
+            @(negedge clk); #1;
+            front_addr = fill_address+1; front_we = 0; front_req = ~front_req;
+            first_phase = front_req;
+            cycles = 0;
+            while (front_done === previous_done && cycles < 200) begin
+                tick(); cycles = cycles + 1;
+            end
+            if (front_done === previous_done || front_ack !== first_phase ||
+                front_dout !== result || !busy || head != tail-1 || controller.active)
+                $fatal(1, "Dirty read must complete after fill, before victim writeback");
+            operations = operations + 1;
+            // Queue a read of the victim itself. It must wait for writeback, then
+            // refill the updated SDRAM bytes; changing front inputs cannot lose the victim.
+            ack_delay = 12; done_delay = 24;
+            predict(0, victim_address + (mask[0] ? 20'd0 : 20'd1), 0, queued_result);
+            @(negedge clk); #1;
+            front_addr = victim_address + (mask[0] ? 20'd0 : 20'd1);
+            front_we = 0; front_din = 8'(~result); front_req = ~front_req;
+            queued_phase = front_req;
+            cycles = 0;
+            while (front_ack !== queued_phase && cycles < 200) begin
+                tick(); cycles = cycles + 1;
+                if (front_done !== ~previous_done ||
+                    (front_ack !== queued_phase && front_dout !== result))
+                    $fatal(1, "Deferred writeback altered the completed read response");
+            end
+            if (front_ack !== queued_phase || controller.active)
+                $fatal(1, "Queued victim read was lost or accepted before writeback completed");
+            wait_complete(~previous_done, queued_result);
+            transact(0, victim_address, 0);
+            transact(0, victim_address+1, 0);
+        end
+    endtask
+
     initial begin
         if ($value$plusargs("SEED=%d", seed)) begin end
         if ($value$plusargs("OPS=%d", random_ops)) begin end
         rng = seed;
-        for (i = 0; i < 4; i = i + 1) mask_count[i] = 0;
+        for (i = 0; i < 4; i = i + 1) begin
+            mask_count[i] = 0; deferred_mask_count[i] = 0;
+        end
         sd_phase_count[0] = 0; sd_phase_count[1] = 0;
         // Every address has reproducible, asymmetric bytes and varies across tags.
         for (i = 0; i < 524288; i = i + 1)
@@ -357,6 +431,10 @@ module tb_bsram_cache;
         transact(1, 20'h07050, 8'ha2); transact(0, 20'h07850, 0);
         idle_check();
         queued_pair();
+        $display("Dirty read returns before deferred writeback; queued victim reads wait for drain");
+        deferred_read_case(2'b01);
+        deferred_read_case(2'b10);
+        deferred_read_case(2'b11);
 
         $display("Every tag at index 1023, alternating partial allocations and fills");
         ack_delay = 2; done_delay = 3;
@@ -394,12 +472,28 @@ module tb_bsram_cache;
         transact(1, 20'hff002, 8'hf2); transact(0, 20'hff802, 0);
 
         $display("Reset during unacknowledged and accepted, incomplete fills/writebacks");
-        for (j = 0; j < 4; j = j + 1) begin
+        for (j = 0; j < 6; j = j + 1) begin
             if (j >= 2) transact(1, 20'h12b00 + 20'(j*2), 8'hda);
-            ack_delay = (j & 1) == 0 ? 50 : 0; done_delay = 50;
-            predict(0, 20'h12300 + 20'(j*2), 0, expected_byte);
+            ack_delay = j >= 4 ? 0 : ((j & 1) == 0 ? 50 : 0);
+            done_delay = j >= 4 ? 0 : 50;
+            // Write conflicts retain writeback-first ordering; read conflicts fill first.
+            predict(j >= 2 && j < 4, 20'h12300 + 20'(j*2), 8'h45, expected_byte);
+            before_reset_read_done = front_done;
             @(negedge clk); #1;
-            front_addr = 20'h12300 + 20'(j*2); front_we = 0; front_req = ~front_req;
+            front_addr = 20'h12300 + 20'(j*2); front_we = (j >= 2 && j < 4);
+            front_din = 8'h45; front_req = ~front_req;
+            if (j >= 4) begin
+                // Finish the read, then reset while its deferred victim writeback
+                // is either waiting for acceptance or waiting for completion.
+                reset_cycles = 0;
+                while (front_done === before_reset_read_done && reset_cycles < 100) begin
+                    tick(); reset_cycles = reset_cycles + 1;
+                end
+                if (front_done === before_reset_read_done || front_dout !== expected_byte || !busy)
+                    $fatal(1, "Deferred reset test did not reach early read response");
+                operations = operations + 1;
+                ack_delay = (j & 1) == 0 ? 50 : 0; done_delay = 50;
+            end
             repeat (8) tick();
             if (!controller.active || controller.accepted !== 1'(j) ||
                 controller.saved_we !== (j >= 2))
@@ -435,17 +529,21 @@ module tb_bsram_cache;
                 $fatal(1, "Backing memory mismatch at word %h: got %h expected %h%h",
                        i, controller.mem[i], golden[2*i+1], golden[2*i]);
         idle_check();
-        // States 8/9 (WAIT_RESPOND/RESPOND) were removed; active states are 0-7, 10-11.
-        if (states_seen !== 12'hcff || mask_count[1] == 0 || mask_count[2] == 0 || mask_count[3] == 0)
+        // State 8 is unused; RESPOND=9 stages data before completion.
+        if (states_seen !== 12'heff || mask_count[1] == 0 || mask_count[2] == 0 || mask_count[3] == 0)
             $fatal(1, "Missing state/dirty-mask coverage states=%h masks=%0d/%0d/%0d",
                    states_seen, mask_count[1], mask_count[2], mask_count[3]);
         if (sd_phase_count[0] == 0 || sd_phase_count[1] == 0 ||
             simultaneous_completions == 0 || separate_completions == 0)
             $fatal(1, "Missing toggle phase or ack/done timing coverage");
+        if (deferred_mask_count[1] == 0 || deferred_mask_count[2] == 0 || deferred_mask_count[3] == 0)
+            $fatal(1, "Missing deferred read writeback coverage for a dirty byte mask");
         $display("PASS: %0d front operations, %0d SDRAM reads, %0d writebacks; masks 01/10/11=%0d/%0d/%0d",
                  operations, reads, writes, mask_count[1], mask_count[2], mask_count[3]);
         $display("Handshake coverage: simultaneous ack/done=%0d, separate=%0d, req phases 0/1=%0d/%0d",
                  simultaneous_completions, separate_completions, sd_phase_count[0], sd_phase_count[1]);
+        $display("Read responses before writeback, dirty masks 01/10/11=%0d/%0d/%0d",
+                 deferred_mask_count[1], deferred_mask_count[2], deferred_mask_count[3]);
         $finish;
     end
 

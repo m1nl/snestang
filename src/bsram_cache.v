@@ -53,7 +53,7 @@ module bsram_cache (
 
     localparam [3:0] CLEAR = 0, IDLE = 1, LOOKUP = 2, WRITEBACK = 3,
                      WAIT_WRITEBACK = 4, FILL = 5, WAIT_FILL = 6,
-                     ALLOCATE = 7, WAIT_RESPOND = 8, RESPOND = 9, PRIME = 10,
+                     ALLOCATE = 7, RESPOND = 9, PRIME = 10,
                      READ = 11;
     reg [3:0] state;
 
@@ -105,8 +105,10 @@ module bsram_cache (
     end
 
     // Dedicated synchronous read outputs have no reset or alternate drivers.
-    // Read one cycle after acceptance, using the latched address. The outputs
+    // READ samples the address and RAMs on the acceptance edge. The outputs
     // hold the accepted request's word throughout lookup and SDRAM waits.
+    // On a dirty read miss these outputs retain the victim even after FILL
+    // replaces the RAM entry. Keep busy asserted until that victim is written back.
     always @(posedge clk) begin
         if (state == READ) begin
             meta_q <= meta[front_addr[10:1]];
@@ -164,8 +166,8 @@ module bsram_cache (
                         if (!pending_we) begin
                             front_dout <= block ? data_q[15:8] : data_q[7:0];
                         end
-                        state <= WAIT_RESPOND;
-                    end else if (tag != pending_tag && |dirty) begin
+                        state <= RESPOND;
+                    end else if (pending_we && !tag_match && |dirty) begin
                         state <= WRITEBACK;
                     end else if (pending_we) begin
                         state <= ALLOCATE;
@@ -188,7 +190,7 @@ module bsram_cache (
                     if (pending_we)
                         state <= ALLOCATE;
                     else
-                        state <= FILL;
+                        state <= IDLE;
                 end
 
                 FILL: if (sd_req == sd_ack) begin
@@ -202,7 +204,7 @@ module bsram_cache (
 
                 WAIT_FILL: if (sd_done != sd_done_seen) begin
                     front_dout <= block ? merged[15:8] : merged[7:0];
-                    state <= WAIT_RESPOND;
+                    state <= RESPOND;
                 end
 
                 ALLOCATE: begin
@@ -210,11 +212,14 @@ module bsram_cache (
                     state <= IDLE;
                 end
 
-                WAIT_RESPOND: state <= RESPOND;
-
                 RESPOND: begin
                     front_done <= ~front_done;
-                    state <= IDLE;
+                    // Reads complete before eviction writeback. meta_q/data_q
+                    // still contain the old tag, dirty mask and word here.
+                    if (!pending_we && !tag_match && |dirty)
+                        state <= WRITEBACK;
+                    else
+                        state <= IDLE;
                 end
 
                 default: state <= CLEAR;

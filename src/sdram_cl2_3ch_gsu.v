@@ -291,6 +291,8 @@ always @(*) begin
         next_we[0]   = cpu_we;
         next_oe[0]   = ~cpu_we;
 `endif
+    end else if (need_refresh) begin
+        /* no-op */
     end else if (bsram_req ^ bsram_req_ack) begin
         next_port[0] = PORT_BSRAM;
         next_addr[0] = { 2'b01, 3'b011, bsram_addr };   // BSRAM at physical 3MB in bank 1
@@ -298,8 +300,6 @@ always @(*) begin
         next_ds[0] = bsram_ds;
         next_we[0] = bsram_we;
         next_oe[0] = ~bsram_we;
-    end else if (need_refresh) begin
-        /* no-op */
     end else if ((gsu_req ^ gsu_req_ack) && ~&rv_stall) begin
         next_port[0] = PORT_GSU;
 `ifdef SDRAM_16M

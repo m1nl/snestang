@@ -1,4 +1,4 @@
-# BSRAM cache regression
+# Two-way BSRAM cache regression
 
 Requires Icarus Verilog (`iverilog` and `vvp`) and Make. From `src`:
 
@@ -8,103 +8,78 @@ make -C verilator -f Makefile.bsram_cache test SEEDS="7 123" OPS=10000
 ```
 
 The default runs three deterministic seeds with 4,000 randomized requests each,
-in addition to the directed tests. Build output goes to `/tmp/snestang-bsram-cache`;
-override `BUILD_DIR` if needed. Any assertion failure returns a nonzero exit status.
-`SEED` initializes a private random generator, making failures reproducible.
-The expected-transfer queue holds 262,144 transfers; a 100 ms simulation watchdog
-also bounds each run. Very large `OPS` settings may need these limits increased.
+plus directed tests. Build output goes to `/tmp/snestang-bsram-cache`;
+`BUILD_DIR` overrides that path. An assertion failure returns a nonzero exit
+status. The expected-transfer queue holds 262,144 transfers; a 100 ms simulation
+watchdog bounds each run. Very large `OPS` settings may need larger limits.
 
-`tb_bsram_cache.sv` instantiates the real `bsram_cache.v` and a behavioral
-controller at its SDRAM interface. It uses an independent byte-addressed memory
-scoreboard and direct-map policy predictor. Every SDRAM request is checked for
-address, ordering, direction, byte enables, and enabled writeback bytes. Read
-results are checked against the architectural memory. After evicting all dirty
-lines, the entire 1 MiB backing store is compared with that memory, including bytes
-that should remain untouched. Expectations do not inspect the DUT's RAMs or tags;
-`dbg_state` is used for state coverage, initialization timing, and diagnostics.
-The test discovers the word count with `$size(dut.meta)` and checks that the data
-RAM has the same depth. Power-of-two depths up to 16,384 words are supported;
-no test setting needs changing when the RTL cache depth changes. Index/tag
-calculations, conflict addresses, initialization duration, exhaustive sweeps and
-final dirty eviction all follow that depth. The DUT must consistently update its
-RAM depths, index widths, address slices, tags and clear-counter limit.
+## Organization and replacement
 
-Coverage includes:
+`bsram_cache.v` defaults to `SET_BITS=10`: 1,024 sets, two 16-bit words per set,
+2,048 words total (4 KiB). Both ways are read synchronously in parallel on the
+front acceptance edge. Each metadata word contains both ways' tags and per-byte
+valid/dirty masks, plus one LRU victim bit. A partially valid word owns its tag.
 
-- The one-cycle-per-word metadata clear and PRIME cycle, held requests during initialization,
-  reset output values, and all four initial SDRAM `ack`/`done` phase combinations.
-- Cold fills, low/high byte hits, clean conflicts, zero and maximum addresses,
-  index boundaries, every cache index, and an exhaustive sweep of all address tags for the configured depth.
-- Write allocation without a read, repeated byte writes, writing a clean word,
-  and writes to both bytes of a partially valid word.
-- Both partial-fill directions, preserving valid dirty bytes while reading the
-  missing byte and retaining the dirty mask for subsequent eviction.
-- Low-only, high-only, and both-byte writebacks; eviction of partial words;
-  reads fill and writes allocate before completing and writing back the victim.
-- Early read/write completion, requests queued during eviction, and cache hits
-  completing while a writeback is outstanding. Fills and further writebacks must
-  wait for the old write's `done`, even when `req` already matches `ack`.
-- Inhibited read conflicts against each dirty mask fetch data without replacing
-  the resident word or writing it back. Same-tag partial fills and clean conflict
-  fills still allocate; inhibited write conflicts still evict dirty victims.
-  Random traffic also varies inhibit, and the driver changes it after acceptance
-  to verify the accepted flag was latched.
-- Input changes after front `ack`, requests queued while busy, stable idle
-  handshakes, and no duplicate requests/completions.
-- The `IDLE` → `READ` → `LOOKUP` pipeline: `IDLE` detects a request; `READ`
-  captures its payload and synchronously reads metadata/data on the acceptance
-  edge; `LOOKUP` processes the RAM outputs on the next edge and launches read
-  misses directly into `WAIT_FILL`, eliminating the separate `FILL` cycle. Inputs change after
-  acceptance to verify that subsequent processing uses the accepted payload.
-  Writes return the accepted byte at both `ack` and completion.
-- Dirty data discarded by reset and complete invalidation across all indices;
-  reset during unacknowledged and accepted-but-incomplete SDRAM fills/writebacks,
-  including deferred writebacks after the front request has already completed.
-- Random reads/writes, concentrated hotspots, conflicting tags, repeated addresses,
-  and full-range addresses with variable controller delays.
+Replacement first chooses a matching tag, then an invalid way (way 0 breaks
+an invalid-way tie), then the LRU way. A successful hit or installation makes the
+other way LRU. One bit gives exact LRU for two ways. A bypassed inhibited read
+does not install data or change LRU.
+
+The test discovers the number of sets from `$size(dut.meta)` and checks both
+data RAM depths. Its geometry calculations and sweeps adapt to power-of-two
+capacities up to 16,384 total words (`SET_BITS=13`). Expected data and replacement
+decisions use an independent byte memory, two-way tag/mask arrays and LRU model;
+no DUT metadata contents are used to predict transfers or victims.
+
+## Coverage
+
+- Cold reads, low/high byte hits, address zero and the final byte of the full
+  1 MiB address space; an exhaustive tag sweep at the final set.
+- Two conflicting tags coexisting without extra fills, invalid-way preference,
+  LRU updates on hits, and third-tag replacement of the correct way.
+- Both ways of every set populated, dirtied, evicted and verified against backing
+  memory; reset invalidation across both ways of every set.
+- Low-only, high-only and both-byte dirty victims from both ways, masked writes,
+  partial word allocation and fills that preserve valid dirty bytes.
+- Inhibited reads bypass dirty victims without allocation, writeback or LRU
+  changes; clean misses and same-tag partial fills still cache. Inhibited write
+  misses still allocate and write back their dirty victims.
+- Front input changes after acceptance, including the inhibit flag, to verify
+  the accepted payload is retained.
+- Read fills and write allocations complete before deferred victim writeback.
+  Hits and allocations overlap an accepted outstanding write; subsequent fills
+  and evictions wait for its completion.
+- Queued front requests, reset during unaccepted/accepted incomplete fills and
+  writebacks, initialization-held requests and all four ack/done reset phases.
+- Random hotspots, conflicting tags, repeated and full-range addresses, inhibit
+  variation, independent acceptance/completion latencies and early/late read data.
+- Every active state, dirty mask, deferred read/write victim mask, inhibit mask,
+  both request phases and simultaneous/separate ack/done completion.
+
+After evicting both residents in every set, the test compares the entire backing
+memory with the architectural memory, including bytes that must stay untouched.
 
 ## Controller interface
 
-`bsram_sdram_model.sv` implements the controller boundary: `req` toggles for a new
-request, `ack` takes that phase when accepted, and `done` toggles only when the
-transfer completes. `ack` and `done` are independent phases, not pulses. `ds[0]`
-enables the low byte and `ds[1]` the high byte; reads fetch a whole aligned word.
-Acceptance and completion delays are independently configurable. Zero completion
-delay exercises simultaneous `ack`/`done`, matching the write behavior of
-`sdram_cl2_3ch.v`; positive delay exercises the separate read completion.
-Read data can appear at acceptance or only at completion. Between transfers,
-the latter mode poisons the data bus to catch premature sampling.
+`bsram_sdram_model.sv` models toggle phases: `req` toggles for a new request,
+`ack` takes that phase on acceptance, and `done` toggles on completion. Payloads
+must remain stable until ack. The model retains the accepted payload, allowing
+new address/data/control fields to be prepared after ack. The request phase must
+remain stable until done, and the cache must not launch another transfer before
+completion. Directed overlap tests exercise payload preparation during that wait.
 
-Protocol assertions require stable SDRAM payloads through acceptance and a
-stable request phase through completion. The model retains the accepted payload,
-so the cache may prepare new address/data/control fields after `ack`; directed
-traffic verifies such changes while an old write still awaits `done`.
-Assertions also check acceptance
-before completion, no overlapping backend transfers, and front completion after
-the requested fill completes. On dirty misses, the only remaining transfer
-at `front_done` must be the deferred victim writeback, which must start after that
-response. Cache requests may proceed once the victim has been copied into the
-SDRAM request registers, but further SDRAM transactions wait for write completion.
-The test
-requires coverage of every active cache state, every dirty mask (including deferred
-writeback), both request phases, and simultaneous/separate `ack`/`done` timing.
+`ds[0]` enables the low byte and `ds[1]` the high byte. Reads fetch an aligned word.
+Acceptance/completion delays vary independently. Read data can appear at ack or
+only at done; the late-data mode poisons the bus between transfers to detect
+premature sampling. Every issued transfer is checked for ordering, address,
+direction, masks and enabled writeback bytes.
 
-The cache retains the victim in its synchronous metadata/data read outputs while
-the fill or allocation replaces the RAM entry. It keeps `busy` asserted until
-WRITEBACK copies the victim into the SDRAM request registers, then returns to IDLE
-while `write_waiting` tracks completion independently. Cache hits can finish in
-that interval. Read launches in LOOKUP and WRITEBACK check `!write_waiting` as well as
-`req == ack`, preventing an old write completion from being consumed by a fill.
-Allocation RAM writes are enabled only for writes. Read fills install their
-merged data and metadata unless an inhibited tag conflict must preserve a dirty
-resident. Clean and same-tag fills are installed even when inhibit is set.
+The cache accepts in `IDLE`, processes synchronous RAM outputs in `LOOKUP`, and
+launches read misses directly into `WAIT_FILL`. The victim remains in the read
+registers while replacement updates the RAMs. `WRITEBACK` copies it to the backend
+registers before returning to IDLE; `write_waiting` guards subsequent transfers
+until done. The test checks completion-time front data; the cache also exposes
+SDRAM data directly while waiting for a fill.
 
-The top-level request generator waits for `busy` to clear and qualifies
-`BSRAM_DONE` against the current address and a pending write, preventing a
-subsequent GSU access from consuming the previous request's completion while a
-new fill is blocked behind writeback. The default driver drains outstanding
-transfers between ordinary requests; directed cases deliberately overlap them.
-
-This tests the cache's controller interface with a model. It does not instantiate
-the production SDRAM controller or verify SDRAM pins, arbitration, refresh,
-clock-domain crossings, or physical memory timing.
+This models the cache/controller boundary. It does not verify production SDRAM
+pins, arbitration, refresh, clock-domain crossings, or implementation timing.

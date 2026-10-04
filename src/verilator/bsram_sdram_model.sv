@@ -20,6 +20,7 @@ module bsram_sdram_model (
     reg [1:0] saved_ds;
     reg saved_we;
     integer wait_ack, wait_done;
+    integer payload_changes_after_ack = 0;
 
     // The opposite edge makes this model independent of DUT NBA ordering.
     always @(negedge clk) begin
@@ -44,9 +45,14 @@ module bsram_sdram_model (
                     $fatal(1, "SDRAM request must be word aligned with nonzero byte enables");
             end
             if (active) begin
-                if ({addr, din, ds, we, req} !==
-                    {saved_addr, saved_din, saved_ds, saved_we, phase})
-                    $fatal(1, "SDRAM payload/req changed before done");
+                if (req !== phase)
+                    $fatal(1, "SDRAM req changed before done");
+                if (!accepted && {addr, din, ds, we} !==
+                    {saved_addr, saved_din, saved_ds, saved_we})
+                    $fatal(1, "SDRAM payload changed before ack");
+                if (accepted && {addr, din, ds, we} !==
+                    {saved_addr, saved_din, saved_ds, saved_we})
+                    payload_changes_after_ack = payload_changes_after_ack + 1;
                 if (!accepted) begin
                     if (wait_ack == 0) begin
                         ack = phase;

@@ -1,0 +1,14 @@
+IVERILOG ?= iverilog
+VVP ?= vvp
+BUILD_DIR ?= /tmp/snestang-sdram-gsu
+SOURCES := ../sdram_cl2_3ch_gsu.v tb_sdram_gsu_shared.sv
+TESTS := $(BUILD_DIR)/bank4-delay0 $(BUILD_DIR)/bank4-delay1 $(BUILD_DIR)/bank8-delay0 $(BUILD_DIR)/bank8-delay1
+.PHONY: test
+test: $(TESTS)
+	@set -e; for test in $(TESTS); do $(VVP) $$test; done
+$(BUILD_DIR)/bank4-delay%: $(SOURCES) Makefile.sdram_gsu
+	mkdir -p $(BUILD_DIR)
+	$(IVERILOG) -g2012 -Wall -Wno-timescale -DVERILATOR -DSDRAM_16M -s tb_sdram_gsu_shared -Ptb_sdram_gsu_shared.DONE_DELAY=$* -o $@ $(SOURCES)
+$(BUILD_DIR)/bank8-delay%: $(SOURCES) Makefile.sdram_gsu
+	mkdir -p $(BUILD_DIR)
+	$(IVERILOG) -g2012 -Wall -Wno-timescale -DVERILATOR -s tb_sdram_gsu_shared -Ptb_sdram_gsu_shared.DONE_DELAY=$* -o $@ $(SOURCES)

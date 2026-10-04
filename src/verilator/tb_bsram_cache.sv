@@ -5,7 +5,7 @@ module tb_bsram_cache;
     reg resetn = 0;
     reg [19:0] front_addr = 0;
     reg [7:0] front_din = 0;
-    reg front_we = 0, front_req = 0;
+    reg front_we = 0, front_req = 0, front_inhibit = 0;
     wire front_ack, front_done, busy;
     wire [7:0] front_dout;
     wire [19:0] sd_addr;
@@ -25,16 +25,21 @@ module tb_bsram_cache;
         .initial_ack(initial_ack), .initial_done(initial_done)
     );
 
+    // Discover geometry only; transaction/data prediction remains independent.
+    localparam MAX_CACHE_WORDS = 16384;
+    localparam MAX_TRANSFERS = 262144;
+    integer cache_words, cache_bytes, index_bits, tag_count;
+
     // Architectural memory and independent direct-map policy predictor.
     // No DUT internals are used to predict data or SDRAM transactions.
     reg [7:0] golden [0:1048575];
-    integer tags [0:1023];
-    reg [1:0] valid_bytes [0:1023], dirty_bytes [0:1023];
-    reg [19:0] expected_addr [0:65535];
-    reg [15:0] expected_data [0:65535];
-    reg [1:0] expected_ds [0:65535];
-    reg expected_we [0:65535];
-    reg expected_deferred [0:65535];
+    integer tags [0:MAX_CACHE_WORDS-1];
+    reg [1:0] valid_bytes [0:MAX_CACHE_WORDS-1], dirty_bytes [0:MAX_CACHE_WORDS-1];
+    reg [19:0] expected_addr [0:MAX_TRANSFERS-1];
+    reg [15:0] expected_data [0:MAX_TRANSFERS-1];
+    reg [1:0] expected_ds [0:MAX_TRANSFERS-1];
+    reg expected_we [0:MAX_TRANSFERS-1];
+    reg expected_deferred [0:MAX_TRANSFERS-1];
     integer head = 0, tail = 0;
     integer operations = 0, reads = 0, writes = 0;
     integer mask_count [0:3];
@@ -50,6 +55,9 @@ module tb_bsram_cache;
     integer deferred_mask_count [0:3];
     integer deferred_write_mask_count [0:3];
     integer responses_during_write = 0, guarded_sdram_cycles = 0;
+    integer inhibited_read_masks [0:3];
+    integer inhibited_write_masks [0:3];
+    integer lookup_fills = 0;
     integer seed = 1, rng, random_ops = 4000;
     integer i, j, index, tag_number, value;
     reg [19:0] random_addr;
@@ -63,7 +71,7 @@ module tb_bsram_cache;
 
     task enqueue(input bit wr, input [19:0] address,
                  input [1:0] mask, input [15:0] data_value, input bit deferred = 0);
-        if (tail == 65536) $fatal(1, "Expected transaction queue overflow");
+        if (tail == MAX_TRANSFERS) $fatal(1, "Expected transaction queue overflow");
         expected_we[tail] = wr;
         expected_addr[tail] = address;
         expected_ds[tail] = mask;
@@ -73,42 +81,53 @@ module tb_bsram_cache;
     endtask
 
     task predict(input bit wr, input [19:0] address,
-                 input [7:0] data_value, output reg [7:0] result);
+                 input [7:0] data_value, output reg [7:0] result, input bit inhibit = 0);
         integer slot, new_tag, victim;
         reg [1:0] mask;
         reg [1:0] victim_dirty;
         reg [15:0] victim_data;
         begin
-            slot = int'(address[10:1]);
-            new_tag = int'(address[19:11]);
+            slot = (int'(address) >> 1) % cache_words;
+            new_tag = int'(address) / cache_bytes;
             mask = address[0] ? 2'b10 : 2'b01;
             victim_dirty = 0;
             victim = 0;
             victim_data = 0;
-            if (tags[slot] != new_tag) begin
-                if (dirty_bytes[slot] != 0) begin
-                    victim = tags[slot] * 2048 + slot * 2;
-                    victim_dirty = dirty_bytes[slot];
-                    victim_data = {golden[victim+1], golden[victim]};
-                end
-                tags[slot] = new_tag;
-                valid_bytes[slot] = 0;
-                dirty_bytes[slot] = 0;
-            end
-            if (wr) begin
-                golden[address] = data_value;
-                valid_bytes[slot] = valid_bytes[slot] | mask;
-                dirty_bytes[slot] = dirty_bytes[slot] | mask;
-                result = data_value;
-            end else begin
-                if ((valid_bytes[slot] & mask) == 0) begin
-                    enqueue(0, {address[19:1], 1'b0}, 2'b11, 0);
-                    valid_bytes[slot] = 2'b11;
-                end
+            // Inhibited read conflicts fetch the requested word without
+            // replacing a dirty resident word or writing its bytes back.
+            if (!wr && inhibit && tags[slot] != new_tag && dirty_bytes[slot] != 0) begin
+                enqueue(0, {address[19:1], 1'b0}, 2'b11, 0);
                 result = golden[address];
+                inhibited_read_masks[dirty_bytes[slot]] = inhibited_read_masks[dirty_bytes[slot]] + 1;
+            end else begin
+                if (tags[slot] != new_tag) begin
+                    if (dirty_bytes[slot] != 0) begin
+                        victim = tags[slot] * cache_bytes + slot * 2;
+                        victim_dirty = dirty_bytes[slot];
+                        victim_data = {golden[victim+1], golden[victim]};
+                    end
+                    tags[slot] = new_tag;
+                    valid_bytes[slot] = 0;
+                    dirty_bytes[slot] = 0;
+                end
+                if (wr) begin
+                    golden[address] = data_value;
+                    valid_bytes[slot] = valid_bytes[slot] | mask;
+                    dirty_bytes[slot] = dirty_bytes[slot] | mask;
+                    result = data_value;
+                end else begin
+                    if ((valid_bytes[slot] & mask) == 0) begin
+                        enqueue(0, {address[19:1], 1'b0}, 2'b11, 0);
+                        valid_bytes[slot] = 2'b11;
+                    end
+                    result = golden[address];
+                end
+                if (victim_dirty != 0) begin
+                    enqueue(1, 20'(victim), victim_dirty, victim_data, 1);
+                    if (wr && inhibit)
+                        inhibited_write_masks[victim_dirty] = inhibited_write_masks[victim_dirty] + 1;
+                end
             end
-            if (victim_dirty != 0)
-                enqueue(1, 20'(victim), victim_dirty, victim_data, 1);
         end
     endtask
 
@@ -128,7 +147,7 @@ module tb_bsram_cache;
                 front_done !== last_front_done || sd_req !== last_sd_req))
                 $fatal(1, "READ must spend one cycle reading RAM before LOOKUP");
             states_seen[dbg_state] = 1;
-            if (sd_inflight && sd_inflight_we && (dbg_state == 3 || dbg_state == 5))
+            if (sd_inflight && sd_inflight_we && (dbg_state == 3 || dbg_state == 2))
                 guarded_sdram_cycles = guarded_sdram_cycles + 1;
             if (busy !== ((dbg_state != 1) || (front_req != front_ack)))
                 $fatal(1, "Incorrect busy output");
@@ -154,7 +173,12 @@ module tb_bsram_cache;
                                sd_din, expected_data[head], sd_ds);
                     writes = writes + 1;
                     mask_count[sd_ds] = mask_count[sd_ds] + 1;
-                end else reads = reads + 1;
+                end else begin
+                    if (previous_state !== 4'd2 || dbg_state !== 4'd6)
+                        $fatal(1, "Read miss must launch from LOOKUP directly into WAIT_FILL");
+                    lookup_fills = lookup_fills + 1;
+                    reads = reads + 1;
+                end
                 head = head + 1;
                 last_sd_req = sd_req;
             end
@@ -229,18 +253,19 @@ module tb_bsram_cache;
         end
     endtask
 
-    task transact(input bit wr, input [19:0] address, input [7:0] data_value);
+    task transact(input bit wr, input [19:0] address, input [7:0] data_value, input bit inhibit = 0);
         reg [7:0] result;
         reg previous_done, requested_phase;
         integer cycles;
         begin
             if (busy) $fatal(1, "Driver issued ordinary request while busy");
-            predict(wr, address, data_value, result);
+            predict(wr, address, data_value, result, inhibit);
             previous_done = front_done;
             @(negedge clk); #1;
             front_addr = address;
             front_we = wr;
             front_din = data_value;
+            front_inhibit = inhibit;
             front_req = ~front_req;
             requested_phase = front_req;
             #1; // allow continuous busy assignment to settle
@@ -259,6 +284,7 @@ module tb_bsram_cache;
             front_addr = ~address;
             front_din = ~data_value;
             front_we = ~wr;
+            front_inhibit = ~inhibit;
             wait_complete(previous_done, result);
             if (front_ack !== requested_phase || busy)
                 $fatal(1, "Incorrect ack/busy after completion");
@@ -284,7 +310,7 @@ module tb_bsram_cache;
             resetn = 0;
             initial_ack = ack_phase;
             initial_done = done_phase;
-            front_req = 0;
+            front_req = 0; front_inhibit = 0;
             repeat (3) tick();
             if ({front_ack, front_done, front_dout} !== 10'b0 || sd_req !== ack_phase)
                 $fatal(1, "Incorrect reset output/SDRAM phase synchronization");
@@ -293,7 +319,7 @@ module tb_bsram_cache;
                 golden[2*word_index] = controller.mem[word_index][7:0];
                 golden[2*word_index+1] = controller.mem[word_index][15:8];
             end
-            for (slot = 0; slot < 1024; slot = slot + 1) begin
+            for (slot = 0; slot < cache_words; slot = slot + 1) begin
                 tags[slot] = 0; valid_bytes[slot] = 0; dirty_bytes[slot] = 0;
             end
             head = 0; tail = 0;
@@ -302,8 +328,8 @@ module tb_bsram_cache;
                 predict(0, 20'hff801, 0, expected_byte);
                 front_addr = 20'hff801; front_we = 0; front_req = 1;
             end
-            // Exactly 1024 clear clocks, then PRIME, then IDLE.
-            repeat (1024) begin
+            // One clear clock per cache word, then PRIME, then IDLE.
+            repeat (cache_words) begin
                 tick();
                 if (!busy || front_ack !== 0 || front_done !== 0 || sd_req !== ack_phase)
                     $fatal(1, "Cache accepted/completed a request during metadata clear");
@@ -327,7 +353,7 @@ module tb_bsram_cache;
             predict(0, 20'habc12, 0, first_result);
             first_done = front_done;
             @(negedge clk); #1;
-            front_addr = 20'habc12; front_we = 0; front_req = ~front_req;
+            front_addr = 20'habc12; front_we = 0; front_inhibit = 0; front_req = ~front_req;
             first_phase = front_req;
             tick(); tick();
             if (front_ack !== first_phase) $fatal(1, "First queued request not accepted");
@@ -355,7 +381,7 @@ module tb_bsram_cache;
         integer cycles;
         begin
             victim_address = 20'h22080 + 20'(4*mask) + (wr ? 20'h40 : 20'h0);
-            fill_address = victim_address + 20'h800;
+            fill_address = victim_address + 20'(cache_bytes);
             ack_delay = 0; done_delay = 0;
             if (mask[0]) transact(1, victim_address, 8'hb6);
             if (mask[1]) transact(1, victim_address+1, 8'hd9);
@@ -363,7 +389,7 @@ module tb_bsram_cache;
             predict(wr, fill_address+1, 8'h73, result);
             previous_done = front_done;
             @(negedge clk); #1;
-            front_addr = fill_address+1; front_we = wr; front_din = 8'h73;
+            front_addr = fill_address+1; front_we = wr; front_inhibit = 0; front_din = 8'h73;
             front_req = ~front_req;
             first_phase = front_req;
             cycles = 0;
@@ -409,7 +435,7 @@ module tb_bsram_cache;
             predict(wr, address, data_value, result);
             previous_done = front_done;
             @(negedge clk); #1;
-            front_addr = address; front_din = data_value; front_we = wr;
+            front_addr = address; front_din = data_value; front_we = wr; front_inhibit = 0;
             front_req = ~front_req; phase = front_req;
             cycles = 0;
             while (front_ack !== phase && cycles < 8) begin tick(); cycles = cycles + 1; end
@@ -431,7 +457,7 @@ module tb_bsram_cache;
             ack_delay = 0; done_delay = 0;
             transact(1, 20'h33040, 8'hb6);
             done_delay = 70;
-            rapid_request(1, 20'h33840, 8'h9a);
+            rapid_request(1, 20'h33040 + 20'(cache_bytes), 8'h9a);
             cycles = 0;
             while ((!controller.active || !controller.accepted) && cycles < 20) begin
                 tick(); cycles = cycles + 1;
@@ -439,11 +465,11 @@ module tb_bsram_cache;
             if (!controller.active || !controller.accepted || busy || sd_req !== sd_ack)
                 $fatal(1, "Did not reach accepted-but-incomplete writeback in IDLE");
             phase = sd_req;
-            rapid_request(0, 20'h33840, 0);
-            rapid_request(1, 20'h33841, 8'hd9);
-            rapid_request(0, 20'h33841, 0);
+            rapid_request(0, 20'h33040 + 20'(cache_bytes), 0);
+            rapid_request(1, 20'h33041 + 20'(cache_bytes), 8'hd9);
+            rapid_request(0, 20'h33041 + 20'(cache_bytes), 0);
             // This allocation finishes too, but cannot issue its own eviction yet.
-            rapid_request(1, 20'h34040, 8'h73);
+            rapid_request(1, 20'h33040 + 20'(2*cache_bytes), 8'h73);
             if (!controller.active || sd_req !== phase || !busy)
                 $fatal(1, "Second writeback bypassed the outstanding-write guard");
             // Once the first write finishes, the next victim is copied into the
@@ -451,70 +477,126 @@ module tb_bsram_cache;
             cycles = 0;
             while (busy && cycles < 200) begin tick(); cycles = cycles + 1; end
             if (busy || sd_req === phase) $fatal(1, "Second writeback did not resume after done");
-            transact(0, 20'h33840, 0);
-            transact(0, 20'h33841, 0);
+            transact(0, 20'h33040 + 20'(cache_bytes), 0);
+            transact(0, 20'h33041 + 20'(cache_bytes), 0);
             transact(0, 20'h33040, 0);
             done_delay = 0;
         end
     endtask
 
+    task inhibited_case(input [1:0] mask);
+        reg [19:0] resident, conflict;
+        integer reads_before, writes_before;
+        begin
+            resident = 20'h20100 + 20'(8*mask);
+            conflict = resident ^ 20'(cache_bytes);
+            ack_delay = 4; done_delay = 9;
+            // Establish the opposite tag first, ensuring partial write allocation.
+            transact(0, conflict, 0);
+            if (mask[0]) transact(1, resident, 8'hb6);
+            if (mask[1]) transact(1, resident+1, 8'hd9);
+            reads_before = reads; writes_before = writes;
+            transact(0, conflict, 0, 1);
+            transact(0, conflict+1, 0, 1);
+            if (reads != reads_before+2 || writes != writes_before)
+                $fatal(1, "Inhibited dirty conflict must bypass allocation/writeback");
+            // The retained dirty byte must still hit, without any SDRAM transfer.
+            reads_before = reads;
+            transact(0, resident + (mask[0] ? 20'd0 : 20'd1), 0, 1);
+            if (reads != reads_before || writes != writes_before)
+                $fatal(1, "Inhibited conflict discarded its dirty resident");
+            if (mask != 2'b11) begin
+                // Inhibit must still allow a same-tag missing byte to be cached.
+                transact(0, resident + (mask[0] ? 20'd1 : 20'd0), 0, 1);
+                transact(0, resident + (mask[0] ? 20'd1 : 20'd0), 0, 1);
+                if (reads != reads_before+1 || writes != writes_before)
+                    $fatal(1, "Inhibited partial fill was not cached safely");
+            end
+            // Inhibit applies to reads: a conflicting write still evicts.
+            transact(1, conflict, 8'h73, 1);
+            if (writes != writes_before+1)
+                $fatal(1, "Inhibited write must write back its dirty victim");
+            transact(0, resident, 0, 1);
+            transact(0, resident+1, 0, 1);
+            transact(0, resident, 0);
+            // A clean conflict can be installed even with inhibit asserted.
+            reads_before = reads; writes_before = writes;
+            transact(0, conflict, 0, 1);
+            transact(0, conflict+1, 0, 1);
+            if (reads != reads_before+1 || writes != writes_before)
+                $fatal(1, "Inhibited clean conflict should allocate normally");
+        end
+    endtask
+
     initial begin
+        cache_words = $size(dut.meta);
+        if (cache_words < 1 || cache_words > MAX_CACHE_WORDS ||
+            (cache_words & (cache_words-1)) != 0 || $size(dut.data) != cache_words)
+            $fatal(1, "Unsupported cache geometry: meta=%0d data=%0d (max %0d power-of-two words)",
+                   cache_words, $size(dut.data), MAX_CACHE_WORDS);
+        cache_bytes = 2 * cache_words;
+        index_bits = $clog2(cache_words);
+        tag_count = 1048576 / cache_bytes;
         if ($value$plusargs("SEED=%d", seed)) begin end
         if ($value$plusargs("OPS=%d", random_ops)) begin end
         rng = seed;
         for (i = 0; i < 4; i = i + 1) begin
             mask_count[i] = 0; deferred_mask_count[i] = 0;
             deferred_write_mask_count[i] = 0;
+            inhibited_read_masks[i] = 0; inhibited_write_masks[i] = 0;
         end
         sd_phase_count[0] = 0; sd_phase_count[1] = 0;
         // Every address has reproducible, asymmetric bytes and varies across tags.
         for (i = 0; i < 524288; i = i + 1)
             controller.mem[i] = {8'((i * 29) ^ (i >> 9) ^ 8'ha7),
                                  8'((i * 17) ^ (i >> 7) ^ 8'h39)};
-        $display("bsram_cache seed=%0d randomized operations=%0d", seed, random_ops);
+        $display("bsram_cache words=%0d tags=%0d seed=%0d randomized operations=%0d",
+                 cache_words, tag_count, seed, random_ops);
         reset_cache(0, 0, 1);
         idle_check();
 
         $display("Cold fills, byte hits, clean conflict replacement and address boundaries");
         transact(0, 20'h00000, 0); transact(0, 20'h00001, 0);
-        transact(0, 20'h00800, 0); transact(0, 20'h00000, 0);
+        transact(0, 20'(cache_bytes), 0); transact(0, 20'h00000, 0);
         transact(0, 20'hffffe, 0); transact(0, 20'hfffff, 0);
-        transact(0, 20'h007fe, 0); transact(0, 20'h007ff, 0);
+        transact(0, 20'(cache_bytes-2), 0); transact(0, 20'(cache_bytes-1), 0);
 
         $display("No-fetch allocation, partial fill preservation, all dirty byte masks");
         ack_delay = 5; done_delay = 9;
         transact(1, 20'h02040, 8'h11); transact(0, 20'h02040, 0);
         transact(0, 20'h02041, 0); // partial fill must preserve dirty low byte
-        transact(0, 20'h02840, 0); // low-only eviction then read fill
+        transact(0, 20'h02040 + 20'(cache_bytes), 0); // low-only eviction then read fill
         transact(0, 20'h02040, 0); // observe actual backing write
         transact(1, 20'h03043, 8'h22); transact(0, 20'h03043, 0);
         transact(0, 20'h03042, 0); // partial fill must preserve dirty high byte
-        transact(1, 20'h03842, 8'h33); // high-only eviction then allocate
+        transact(1, 20'h03042 + 20'(cache_bytes), 8'h33); // high-only eviction then allocate
         transact(0, 20'h03043, 0);
         transact(1, 20'h04044, 8'h44); transact(1, 20'h04045, 8'h55);
         transact(1, 20'h04044, 8'h66); // overwrite, preserve other byte
         transact(0, 20'h04045, 0);
-        transact(1, 20'h04845, 8'h77); // both-dirty eviction, high-only allocation
+        transact(1, 20'h04045 + 20'(cache_bytes), 8'h77); // both-dirty eviction, high-only allocation
         transact(0, 20'h04044, 0); transact(0, 20'h04045, 0);
         // Evict partial words without filling their missing bytes first.
-        transact(1, 20'h05046, 8'h81); transact(1, 20'h05846, 8'h82);
+        transact(1, 20'h05046, 8'h81); transact(1, 20'h05046 + 20'(cache_bytes), 8'h82);
         transact(0, 20'h05047, 0); transact(0, 20'h05046, 0);
-        transact(1, 20'h06049, 8'h91); transact(0, 20'h06848, 0);
+        transact(1, 20'h06049, 8'h91); transact(0, 20'h06048 + 20'(cache_bytes), 0);
         transact(0, 20'h06048, 0); transact(0, 20'h06049, 0);
         // Write hits in a clean, fully valid word become dirty without refetch.
         transact(0, 20'h07050, 0); transact(1, 20'h07051, 8'ha1);
-        transact(1, 20'h07050, 8'ha2); transact(0, 20'h07850, 0);
+        transact(1, 20'h07050, 8'ha2); transact(0, 20'h07050 + 20'(cache_bytes), 0);
         idle_check();
         queued_pair();
         $display("Reads/writes complete before eviction; queued victim fills wait for writeback done");
         deferred_case(0, 2'b01); deferred_case(0, 2'b10); deferred_case(0, 2'b11);
         deferred_case(1, 2'b01); deferred_case(1, 2'b10); deferred_case(1, 2'b11);
         outstanding_write_case();
+        $display("Inhibited reads preserve dirty victims; partial/clean fills cache; writes still evict");
+        inhibited_case(2'b01); inhibited_case(2'b10); inhibited_case(2'b11);
 
-        $display("Every tag at index 1023, alternating partial allocations and fills");
+        $display("Every tag at index %0d, alternating partial allocations and fills", cache_words-1);
         ack_delay = 2; done_delay = 3;
-        for (i = 0; i < 512; i = i + 1) begin
-            random_addr = 20'((i << 11) | 2046 | (i & 1));
+        for (i = 0; i < tag_count; i = i + 1) begin
+            random_addr = 20'(i * cache_bytes + cache_bytes - 2 + (i & 1));
             transact(1, random_addr, 8'(i ^ 8'hbc));
             transact(0, random_addr ^ 20'h1, 0);
             transact(0, random_addr, 0);
@@ -522,33 +604,33 @@ module tb_bsram_cache;
 
         $display("All indices/tags: populate, dirty, evict, and verify backing bytes");
         ack_delay = 0; done_delay = 0;
-        for (i = 0; i < 1024; i = i + 1) begin
+        for (i = 0; i < cache_words; i = i + 1) begin
             transact(1, 20'h80000 + 20'(2*i), 8'(i));
             transact(1, 20'h80001 + 20'(2*i), 8'(~i));
         end
-        for (i = 0; i < 1024; i = i + 1)
-            transact(0, 20'h80800 + 20'(2*i), 0);
-        for (i = 0; i < 1024; i = i + 1) begin
+        for (i = 0; i < cache_words; i = i + 1)
+            transact(0, 20'h80000 + 20'(cache_bytes) + 20'(2*i), 0);
+        for (i = 0; i < cache_words; i = i + 1) begin
             transact(0, 20'h80000 + 20'(2*i), 0);
             transact(0, 20'h80001 + 20'(2*i), 0);
         end
 
         $display("Reset discards dirty data and clears every index; nonzero SDRAM phases");
-        for (i = 0; i < 1024; i = i + 1)
+        for (i = 0; i < cache_words; i = i + 1)
             transact(1, 20'h80000 + 20'(2*i), 8'(i ^ 8'h5a));
         reset_cache(1, 1, 0);
-        for (i = 0; i < 1024; i = i + 1) begin
+        for (i = 0; i < cache_words; i = i + 1) begin
             transact(0, 20'h80000 + 20'(2*i), 0);
             transact(0, 20'h80001 + 20'(2*i), 0);
         end
         reset_cache(1, 0, 0);
         transact(0, 20'hfff01, 0);
         reset_cache(0, 1, 0);
-        transact(1, 20'hff002, 8'hf2); transact(0, 20'hff802, 0);
+        transact(1, 20'hff002, 8'hf2); transact(0, 20'hff002 ^ 20'(cache_bytes), 0);
 
         $display("Reset during unacknowledged and accepted, incomplete fills/writebacks");
         for (j = 0; j < 6; j = j + 1) begin
-            if (j >= 2) transact(1, 20'h12b00 + 20'(j*2), 8'hda);
+            if (j >= 2) transact(1, (20'h12300 + 20'(j*2)) ^ 20'(cache_bytes), 8'hda);
             ack_delay = j >= 4 ? 0 : ((j & 1) == 0 ? 50 : 0);
             done_delay = j >= 4 ? 0 : 50;
             // Both kinds of conflict complete before their victim writeback.
@@ -556,7 +638,7 @@ module tb_bsram_cache;
             before_reset_read_done = front_done;
             @(negedge clk); #1;
             front_addr = 20'h12300 + 20'(j*2); front_we = (j >= 2 && j < 4);
-            front_din = 8'h45; front_req = ~front_req;
+            front_din = 8'h45; front_inhibit = 0; front_req = ~front_req;
             if (j >= 4) begin
                 // Finish the read, then reset while its deferred victim writeback
                 // is either waiting for acceptance or waiting for completion.
@@ -577,16 +659,16 @@ module tb_bsram_cache;
             reset_cache(1'(j), 1'(~j), 0);
             ack_delay = 0; done_delay = 0;
             transact(0, 20'h12300 + 20'(j*2), 0);
-            if (j >= 2) transact(0, 20'h12b00 + 20'(j*2), 0);
+            if (j >= 2) transact(0, (20'h12300 + 20'(j*2)) ^ 20'(cache_bytes), 0);
         end
 
         $display("Random traffic with hotspots, conflicts, full-range addresses and latency variation");
         for (i = 0; i < random_ops; i = i + 1) begin
             value = $random(rng) & 32'h7fffffff;
-            index = value % 1024;
-            tag_number = (value >> 10) % 512;
+            index = value % cache_words;
+            tag_number = (value >> index_bits) % tag_count;
             case (i % 4)
-                0: random_addr = 20'((tag_number << 11) | ((index % 8) << 1) | (value & 1));
+                0: random_addr = 20'((tag_number * cache_bytes) | ((index % 8) << 1) | (value & 1));
                 1: random_addr = 20'h60000 + 20'(value % 32);
                 2: random_addr = front_addr ^ 20'hfffff; // revisit last accepted address
                 3: random_addr = 20'(value);
@@ -594,19 +676,19 @@ module tb_bsram_cache;
             ack_delay = value % 11;
             done_delay = (value >> 5) % 17;
             early_data = 1'(value >> 9);
-            transact(1'(value >> 3), random_addr, 8'(value >> 13));
+            transact(1'(value >> 3), random_addr, 8'(value >> 13), 1'(value >> 12));
         end
         // Evict every remaining dirty word, then compare the entire backing memory.
         ack_delay = 1; done_delay = 0;
-        for (i = 0; i < 1024; i = i + 1)
-            transact(0, 20'((((tags[i] + 1) % 512) << 11) | (i << 1)), 0);
+        for (i = 0; i < cache_words; i = i + 1)
+            transact(0, 20'((((tags[i] + 1) % tag_count) * cache_bytes) | (i << 1)), 0);
         for (i = 0; i < 524288; i = i + 1)
             if (controller.mem[i] !== {golden[2*i+1], golden[2*i]})
                 $fatal(1, "Backing memory mismatch at word %h: got %h expected %h%h",
                        i, controller.mem[i], golden[2*i+1], golden[2*i]);
         idle_check();
-        // States 4/8 are unused; RESPOND=9 stages hit data before completion.
-        if (states_seen !== 12'heef || mask_count[1] == 0 || mask_count[2] == 0 || mask_count[3] == 0)
+        // States 4/5/8 are unused; read misses launch in LOOKUP, without FILL.
+        if (states_seen !== 12'hecf || mask_count[1] == 0 || mask_count[2] == 0 || mask_count[3] == 0)
             $fatal(1, "Missing state/dirty-mask coverage states=%h masks=%0d/%0d/%0d",
                    states_seen, mask_count[1], mask_count[2], mask_count[3]);
         if (sd_phase_count[0] == 0 || sd_phase_count[1] == 0 ||
@@ -618,6 +700,15 @@ module tb_bsram_cache;
             $fatal(1, "Missing deferred write writeback coverage for a dirty byte mask");
         if (responses_during_write == 0 || guarded_sdram_cycles == 0)
             $fatal(1, "Missing cache overlap or outstanding-write guard coverage");
+        for (i = 1; i < 4; i = i + 1)
+            if (inhibited_read_masks[i] == 0 || inhibited_write_masks[i] == 0)
+                $fatal(1, "Missing inhibited read/write coverage for dirty mask %b", 2'(i));
+        if (lookup_fills == 0 || controller.payload_changes_after_ack == 0)
+            $fatal(1, "Missing early fill or accepted payload preparation coverage");
+        $display("Inhibited read masks 01/10/11=%0d/%0d/%0d; write masks=%0d/%0d/%0d; accepted payload changes=%0d",
+                 inhibited_read_masks[1], inhibited_read_masks[2], inhibited_read_masks[3],
+                 inhibited_write_masks[1], inhibited_write_masks[2], inhibited_write_masks[3],
+                 controller.payload_changes_after_ack);
         $display("PASS: %0d front operations, %0d SDRAM reads, %0d writebacks; masks 01/10/11=%0d/%0d/%0d",
                  operations, reads, writes, mask_count[1], mask_count[2], mask_count[3]);
         $display("Handshake coverage: simultaneous ack/done=%0d, separate=%0d, req phases 0/1=%0d/%0d",
@@ -632,7 +723,7 @@ module tb_bsram_cache;
     end
 
     initial begin
-        #20000000;
+        #100000000;
         $fatal(1, "Global watchdog timeout");
     end
 endmodule

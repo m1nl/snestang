@@ -66,6 +66,8 @@ module main (
 	input       [7:0] GSU_ROM_Q,
 	input             GSU_TURBO,
 	input             GSU_FASTROM,
+	output            GSU_RAM_ACCESS,
+	output            GSU_ROM_ACCESS,
 	input             SUFAMI_SWAP,
 	input       [7:0] CC_DIP,
 
@@ -184,6 +186,7 @@ wire        PAWR_N;
 //wire        SYSCLKR_CE;
 //wire        REFRESH;
 wire CPURD_CYC_N;
+wire PARD_CYC_N;
 
 wire  [15:0] SNES_ARAM_ADDR;
 wire   [7:0] SNES_ARAM_D;
@@ -241,7 +244,8 @@ SNES SNES
 	.SYSCLKR_CE(SYSCLKR_CE),
 
 	.REFRESH(REFRESH),
-    .CPURD_CYC_N(CPURD_CYC_N),
+	.CPURD_CYC_N(CPURD_CYC_N),
+	.PARD_CYC_N(PARD_CYC_N),
 
 	.DOT_CLK_CE(DOT_CLK_CE),
 
@@ -673,7 +677,7 @@ GSUMap GSUMap
 	.BSRAM_CE_N(GSU_BSRAM_CE_N),
 	.BSRAM_OE_N(GSU_BSRAM_OE_N),
 	.BSRAM_WE_N(GSU_BSRAM_WE_N),
-    .BSRAM_RD_N(GSU_BSRAM_RD_N),
+	.BSRAM_RD_N(GSU_BSRAM_RD_N),
 	.BSRAM_DONE(BSRAM_DONE),
 
 	.MAP_ACTIVE(MAP_ACTIVE[2]),
@@ -687,7 +691,11 @@ GSUMap GSUMap
 	.ROM_ACCEPT(GSU_ROM_ACCEPT),
 	.ROM_DONE(GSU_ROM_DONE),
 
-    .CPURD_CYC_N(CPURD_CYC_N)
+	.CPURD_CYC_N(CPURD_CYC_N),
+	.PARD_CYC_N(PARD_CYC_N),
+
+	.GSU_RAM_ACCESS(GSU_RAM_ACCESS),
+	.GSU_ROM_ACCESS(GSU_ROM_ACCESS)
 );
 assign GSU_ROM_ADDR = gsu_map_rom_addr;
 assign SS_GSU_DI = 8'h00;

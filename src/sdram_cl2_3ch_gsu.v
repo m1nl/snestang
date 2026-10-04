@@ -102,11 +102,12 @@ module sdram_snes_gsu
     input      [19:0] bsram_addr,   // only [16:0], max 128KB
     input      [15:0] bsram_din,
     input       [1:0] bsram_ds,
-    output wire [15:0] bsram_dout,
+    output reg [15:0] bsram_dout,
     input             bsram_req,
     output reg        bsram_req_ack,
     output reg        bsram_done,
     input             bsram_we,
+    input             bsram_gsu,
 
     // GSU ROM reads use a 16-bit word address and return the full word.
     input      [22:1] gsu_addr,
@@ -141,6 +142,9 @@ module sdram_snes_gsu
     input             vram2_req,
     output reg        vram2_ack,
     input             vram2_we,
+
+    // Upcoming VRAM request
+    input             vram_pending,
 
     // RISC-V softcore
     input      [22:1] rv_addr,      // 8MB RV memory space
@@ -187,7 +191,7 @@ localparam [10:0] MODE_REG   = {4'b0, CAS[2:0], BURST_MODE, BURST_LEN};
 
 // 64ms/8192 rows = 7.8us -> 500 cycles@64.8MHz
 // 64ms/8192 rows = 7.8us -> 672 cycles@86.0MHz
-localparam RFRSH_CYCLES_LOW  = 10'd512;
+localparam RFRSH_CYCLES_LOW  = 10'd336;
 localparam RFRSH_CYCLES_HIGH = 10'd640;
 
 // state
@@ -228,7 +232,7 @@ reg write_delay;
 reg clkref_r;
 reg cpu_port_latch;
 
-reg [3:0] rv_stall;
+reg [4:0] rv_stall;
 
 always @(posedge clk)
     clkref_r <= clkref;
@@ -236,21 +240,21 @@ always @(posedge clk)
 reg [9:0] refresh_cnt;
 reg       refresh;
 
-reg should_refresh;
+reg can_refresh;
 reg need_refresh;
 reg do_refresh;
 
 always @(posedge clk) begin
     if (refresh) begin
-        do_refresh     <= 1'b0;
-        should_refresh <= 1'b0;
-        need_refresh   <= 1'b0;
+        do_refresh   <= 1'b0;
+        can_refresh  <= 1'b0;
+        need_refresh <= 1'b0;
 
     end else begin
-        do_refresh <= (should_refresh && aram_req_last) || need_refresh;
+        do_refresh <= (can_refresh && aram_req_last) || need_refresh;
 
         if (refresh_cnt == RFRSH_CYCLES_LOW)
-            should_refresh <= 1'b1;
+            can_refresh <= 1'b1;
         if (refresh_cnt == RFRSH_CYCLES_HIGH)
             need_refresh <= 1'b1;
     end
@@ -291,15 +295,15 @@ always @(*) begin
         next_we[0]   = cpu_we;
         next_oe[0]   = ~cpu_we;
 `endif
-    end else if (need_refresh) begin
-        /* no-op */
-    end else if (bsram_req ^ bsram_req_ack) begin
+    end else if (bsram_req ^ bsram_req_ack && ~(need_refresh && bsram_gsu)) begin
         next_port[0] = PORT_BSRAM;
         next_addr[0] = { 2'b01, 3'b011, bsram_addr };   // BSRAM at physical 3MB in bank 1
         next_din[0] = bsram_din;
         next_ds[0] = bsram_ds;
         next_we[0] = bsram_we;
         next_oe[0] = ~bsram_we;
+    end else if (need_refresh) begin
+        /* no-op */
     end else if ((gsu_req ^ gsu_req_ack) && ~&rv_stall) begin
         next_port[0] = PORT_GSU;
 `ifdef SDRAM_16M
@@ -370,10 +374,6 @@ always @(*) begin
         next_ds[2] = 2'b10;
     end
 end
-
-reg [15:0] bsram_dout_reg;
-
-assign bsram_dout = (cycle[4] && oe_latch[0] && port[0] == PORT_BSRAM) ? dq_in : bsram_dout_reg;
 
 //
 // Generate cfg_now pulse after initialization delay (normally 200us)
@@ -458,8 +458,7 @@ always @(posedge clk, negedge resetn) begin
 
             if (clkref && ~clkref_r && !refresh &&
                 !(|oe_latch) && !(|we_latch)) begin
-                // cycle <= 8'b10000000;     // go to cycle 7 after clkref posedge
-                cycle <= 8'b00001000;        // go to cycle 3 instead
+                cycle <= 8'b00010000;  // go to cycle 4 (critical for BSRAM)
             end
 
             if (!(&refresh_cnt))
@@ -515,7 +514,7 @@ always @(posedge clk, negedge resetn) begin
 
             // REFRESH if there's no ongoing CPU/ARAM/VRAM nor upcoming VRAM requests
             if (cycle[2] && do_refresh &&
-                !(vram1_req^vram1_ack) && !(vram2_req^vram2_ack) &&
+                !vram_pending && (vram1_req == vram1_ack) && (vram2_req == vram2_ack) &&
                 !we_latch[0] && !oe_latch[0] && !we_latch[1] && !oe_latch[1]) begin
                 refresh <= 1'b1;
                 refresh_cnt <= 0;
@@ -602,7 +601,7 @@ always @(posedge clk, negedge resetn) begin
                 case (port[0])
                 PORT_CPU: if (cpu_port_latch) cpu_port1 <= dq_in; else cpu_port0 <= dq_in;
                 PORT_BSRAM: begin
-                    bsram_dout_reg <= dq_in;
+                    bsram_dout <= dq_in;
                     if (!BSRAM_DONE_DELAY)
                         bsram_done <= ~bsram_done;
                 end

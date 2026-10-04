@@ -58,7 +58,11 @@ entity GSUMap is
 		ROM_ACCEPT  : in std_logic;
 		ROM_DONE    : in std_logic;
 
-		CPURD_CYC_N	: in std_logic
+		CPURD_CYC_N	: in std_logic;
+		PARD_CYC_N	: in std_logic;
+
+		GSU_RAM_ACCESS	: out std_logic;
+		GSU_ROM_ACCESS	: out std_logic
 	);
 end GSUMap;
 
@@ -71,7 +75,8 @@ architecture rtl of GSUMap is
 	signal RAM_A 		: std_logic_vector(16 downto 0);
 	signal RAM_WE_N 	: std_logic;
 	signal MAP_SEL	  	: std_logic;
-	signal GSU_RAM_ACCESS		: std_logic;
+	signal GSU_RAM_ACCESS_I		: std_logic;
+	signal GSU_ROM_ACCESS_I		: std_logic;
 	
 begin
 
@@ -112,7 +117,8 @@ begin
 		ROM_ACCEPT  => ROM_ACCEPT,
 		ROM_DONE    => ROM_DONE,
 
-		GSU_RAM_ACCESS_O => GSU_RAM_ACCESS
+		GSU_RAM_ACCESS_O => GSU_RAM_ACCESS_I,
+		GSU_ROM_ACCESS_O => GSU_ROM_ACCESS_I
 	);
 	ROM_REQ <= ROM_REQ_I and MAP_SEL;
 	ROM_OWNED <= ROM_OWNED_I and MAP_SEL;
@@ -126,6 +132,8 @@ begin
 	BSRAM_ADDR 	<= "0000" & RAM_A(15 downto 0);
 	BSRAM_OE_N 	<= not RAM_WE_N;
 	BSRAM_WE_N 	<= RAM_WE_N;
-	BSRAM_RD_N	<= CPURD_CYC_N when GSU_RAM_ACCESS = '0' else not RAM_WE_N;
+	BSRAM_RD_N	<= (CPURD_CYC_N and PARD_CYC_N) when GSU_RAM_ACCESS_I = '0' else not RAM_WE_N;
 	
+	GSU_RAM_ACCESS <= GSU_RAM_ACCESS_I;
+	GSU_ROM_ACCESS <= GSU_ROM_ACCESS_I;
 end rtl;

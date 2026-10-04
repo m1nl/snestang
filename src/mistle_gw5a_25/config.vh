@@ -7,7 +7,7 @@
 `define SDRAM_3CH
 // `define BSRAM_BRAM
 `define CHIP_DSPn
-// `define CHIP_GSU
+`define CHIP_GSU
 
 // `define CONTROLLER_SNES
 // `define CONTROLLER_DS2

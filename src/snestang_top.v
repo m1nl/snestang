@@ -142,6 +142,7 @@ wire fclk_p /* synthesis syn_keep = 1 */;                    // 180-degree shift
 wire clk27 /* synthesis syn_keep = 1 */;                     // 27Mhz for hdmi clock generation
 wire hclk5 /* synthesis syn_keep = 1 */;                     // 720p pixel clock at 74.25Mhz, and 5x high-speeid
 wire hclk /* synthesis syn_keep = 1 */;
+
 // Board-specific 60 MHz USB clock. Supply it from a PLL when USB HID is enabled.
 wire uclk /* synthesis syn_keep = 1 */;
 
@@ -276,6 +277,8 @@ reg         GSU_ROM_DONE;
 wire [15:0] gsu_rom_word;
 reg         gsu_byte_sel;
 wire [7:0]  GSU_ROM_Q = gsu_byte_sel ? gsu_rom_word[15:8] : gsu_rom_word[7:0];
+wire        GSU_RAM_ACCESS;
+wire        GSU_ROM_ACCESS;
 
 wire [16:0] WRAM_ADDR;
 wire        WRAM_CE_N;
@@ -454,7 +457,7 @@ main #(
 
     .GSU_ROM_ADDR(GSU_ROM_ADDR), .GSU_ROM_REQ(GSU_ROM_REQ), .GSU_ROM_OWNED(),
     .GSU_ROM_ACCEPT(GSU_ROM_ACCEPT), .GSU_ROM_DONE(GSU_ROM_DONE),
-    .GSU_ROM_Q(GSU_ROM_Q),
+    .GSU_ROM_Q(GSU_ROM_Q), .GSU_RAM_ACCESS(GSU_RAM_ACCESS), .GSU_ROM_ACCESS(GSU_ROM_ACCESS),
 
     .BSRAM_ADDR(BSRAM_ADDR), .BSRAM_D(BSRAM_D),	.BSRAM_Q(BSRAM_Q),
     .BSRAM_CE_N(BSRAM_CE_N), .BSRAM_OE_N(BSRAM_OE_N), .BSRAM_WE_N(BSRAM_WE_N),
@@ -528,14 +531,16 @@ wire        wram_wr = ~WRAM_CE_N & ~WRAM_WE_N;
 
 reg         bsram_req;
 wire        bsram_req_ack;
-reg  [19:0] bsram_addr_sd;
-reg   [7:0] bsram_din;
-wire  [7:0] bsram_dout;
+reg  [19:0] bsram_addr_sd /* synthesis syn_keep=1 */;
+reg   [7:0] bsram_din /* synthesis syn_keep=1 */;
+wire  [7:0] bsram_dout /* synthesis syn_keep=1 */;
 wire [15:0] bsram_word;
-reg         bsram_wr_r;
-wire        bsram_rd = ~BSRAM_CE_N & (~BSRAM_RD_N || rom_type[7:4] == 4'hC);
+reg         bsram_wr_r /* synthesis syn_keep=1 */;
+wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_RD_N;
 wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
-wire        bsram_done;
+wire        bsram_done /* synthesis syn_keep=1 */;
+reg         bsram_gsu /* synthesis syn_keep=1 */;
+reg         bsram_done_r;
 
 `ifndef BSRAM_BRAM
 wire [19:0] bsram_sd_addr;
@@ -547,18 +552,18 @@ wire        bsram_sd_req;
 wire        bsram_sd_ack;
 wire        bsram_sd_done;
 wire        bsram_cache_busy;
-wire  [2:0] bsram_cache_state;
+wire  [3:0] bsram_cache_state;
 
 bsram_cache bsram_cache_inst (
     .clk(fclk), .resetn(resetn),
     .front_addr(bsram_addr_sd), .front_din(bsram_din),
     .front_we(bsram_wr_r), .front_req(bsram_req),
-    .front_ack(bsram_req_ack), .front_done(bsram_done),
-    .front_dout(bsram_dout), .busy(bsram_cache_busy),
+    .front_inhibit(~bsram_gsu), .front_ack(bsram_req_ack),
+    .front_done(bsram_done), .front_dout(bsram_dout),
     .sd_addr(bsram_sd_addr), .sd_din(bsram_sd_din),
     .sd_ds(bsram_sd_ds), .sd_we(bsram_sd_we), .sd_req(bsram_sd_req),
     .sd_ack(bsram_sd_ack), .sd_done(bsram_sd_done), .sd_dout(bsram_sd_word),
-    .dbg_state(bsram_cache_state)
+    .busy(bsram_cache_busy), .dbg_state(bsram_cache_state)
 );
 `else
 wire bsram_cache_busy = 1'b0;
@@ -587,35 +592,7 @@ assign ARAM_Q = ARAM_ADDR[0] ? aram_word[15:8] : aram_word[7:0];
 `ifdef BSRAM_BRAM
 assign BSRAM_DONE = 1'b1;
 `else
-reg bsram_done_r;
-reg bsram_inflight;
-
-assign BSRAM_DONE = (bsram_done_r == bsram_done);
-
-always @(posedge mclk) begin
-   if (!resetn) begin
-        bsram_done_r <= bsram_done;
-        bsram_inflight <= 0;
-
-    end else begin
-        if (bsram_write_request) begin
-            $display("BSRAM WRITE addr=%x done=%d done_r=%d req=%d req_ack=%d busy=%d inflight=%d state=%d", BSRAM_ADDR, bsram_done, bsram_done_r, bsram_req, bsram_req_ack, bsram_cache_busy, bsram_inflight, bsram_cache_state);
-            bsram_done_r <= ~bsram_done_r;
-
-        end else if (bsram_read_request) begin
-            $display("BSRAM READ  addr=%x done=%d done_r=%d req=%d req_ack=%d busy=%d inflight=%d state=%d", BSRAM_ADDR, bsram_done, bsram_done_r, bsram_req, bsram_req_ack, bsram_cache_busy, bsram_inflight, bsram_cache_state);
-            bsram_done_r <= ~bsram_done_r;
-        end
-        // BSRAM acknowledge
-        if (BSRAM_DONE && bsram_inflight) begin
-            $display("BSRAM ACK   addr=%x done=%d done_r=%d req=%d req_ack=%d busy=%d inflight=%d state=%d", BSRAM_ADDR, bsram_done, bsram_done_r, bsram_req, bsram_req_ack, bsram_cache_busy, bsram_inflight, bsram_cache_state);
-            bsram_inflight <= 0;
-        end
-        // A new request on this edge supersedes completion of the old one.
-        if (bsram_write_request || bsram_read_request)
-            bsram_inflight <= 1;
-    end
-end
+assign BSRAM_DONE = (bsram_done_r != bsram_done);
 `endif
 
 // The GSU uses its own SDRAM request and data path for ROM access.
@@ -680,6 +657,7 @@ always @(posedge mclk) begin
         cpu_req <= 0;
         bsram_req <= 0;
         aram_req <=0;
+        bsram_done_r <= bsram_done;
 
     end else begin
         if (!wram_wr) wram_wr_r <= 0;
@@ -719,9 +697,11 @@ always @(posedge mclk) begin
         if (bsram_read_request || bsram_write_request) begin
             bsram_addr_sd <= BSRAM_ADDR;
             bsram_wr_r <= bsram_wr;
+            bsram_done_r <= bsram_done;
 
             bsram_req <= ~bsram_req;
             bsram_din <= BSRAM_D;
+            bsram_gsu <= GSU_RAM_ACCESS;
         end
 
         if (aram_req == aram_req_ack) begin
@@ -806,22 +786,31 @@ wire        rv_req_active = rv_req;
 wire [15:0] rv_dout = rv_sdram_dout;
 `endif
 
+reg vram1_req;
+reg vram2_req;
+
 reg [14:0] vram1_addr_sd, vram2_addr_sd;
-reg vram1_we_n_r, vram2_we_n_r;
-reg vram1_req /* synthesis syn_keep=1 */;
-reg vram2_req /* synthesis syn_keep=1 */;
-reg [7:0] vram1_din, vram2_din;
+reg        vram1_we_n_r,  vram2_we_n_r;
+reg  [7:0] vram1_din,     vram2_din;
+
+wire vram1_read_request = ~VRAM_OE_N && (VRAM1_ADDR[14:0] != vram1_addr_sd);
+wire vram2_read_request = ~VRAM_OE_N && (VRAM2_ADDR[14:0] != vram2_addr_sd);
+
+wire vram1_write_request = ~VRAM1_WE_N && vram1_we_n_r;
+wire vram2_write_request = ~VRAM2_WE_N && vram2_we_n_r;
+
+wire vram_pending = vram1_read_request || vram2_read_request || vram1_write_request || vram2_write_request;
 
 always @(posedge mclk) begin
     vram1_we_n_r <= VRAM1_WE_N;
-    if ((~VRAM1_WE_N && vram1_we_n_r) || (~VRAM_OE_N && (VRAM1_ADDR[14:0] != vram1_addr_sd))) begin
+    if (vram1_read_request || vram1_write_request) begin
         vram1_addr_sd <= VRAM1_ADDR[14:0];
         vram1_din <= VRAM1_D;
         vram1_req <= ~vram1_req;
     end
 
     vram2_we_n_r <= VRAM2_WE_N;
-    if ((~VRAM2_WE_N && vram2_we_n_r) || (~VRAM_OE_N && (VRAM2_ADDR[14:0] != vram2_addr_sd))) begin
+    if (vram2_read_request || vram2_write_request) begin
         vram2_addr_sd <= VRAM2_ADDR[14:0];
         vram2_din <= VRAM2_D;
         vram2_req <= ~vram2_req;
@@ -831,7 +820,7 @@ end
 `ifdef CHIP_GSU
 sdram_snes_gsu sdram(
 `else
-sdram_snes sdram(
+sdram_snes_gsu sdram(
 `endif
     .clk(fclk), .mclk(mclk), .clkref(DOT_CLK_CE), .resetn(sdram_resetn), .ready(sdram_ready), .refreshing(sdram_refreshing),
 
@@ -858,7 +847,7 @@ sdram_snes sdram(
 `else
     .bsram_addr(bsram_sd_addr), .bsram_din(bsram_sd_din), .bsram_dout(bsram_sd_word),
     .bsram_req(bsram_sd_req), .bsram_req_ack(bsram_sd_ack), .bsram_we(bsram_sd_we),
-    .bsram_ds(bsram_sd_ds), .bsram_done(bsram_sd_done),
+    .bsram_ds(bsram_sd_ds), .bsram_done(bsram_sd_done), .bsram_gsu(bsram_gsu),
 `endif
 
     // ARAM accesses
@@ -871,6 +860,8 @@ sdram_snes sdram(
 
     .vram2_addr(vram2_addr_sd), .vram2_din(vram2_din), .vram2_dout(VRAM2_Q),
     .vram2_req(vram2_req), .vram2_ack(), .vram2_we(~vram2_we_n_r),
+
+    .vram_pending(vram_pending),
 
     // IOSys risc-v softcore
 `ifdef MCU_BL616

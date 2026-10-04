@@ -40,7 +40,8 @@ entity GSU is
 		RAM_CE_N		: out std_logic;
 		RAM_DONE		: in std_logic;
 
-		GSU_RAM_ACCESS_O		: out std_logic
+		GSU_RAM_ACCESS_O		: out std_logic;
+		GSU_ROM_ACCESS_O		: out std_logic
 	);
 end GSU;
 
@@ -303,6 +304,7 @@ begin
 	end process; 
 	
 	GSU_ROM_ACCESS <= GSU_MEM_ACCESS and RON;
+	GSU_ROM_ACCESS_O <= GSU_ROM_ACCESS;
 	ROM_OWNED <= GSU_ROM_ACCESS;
 	ROM_REQ <= '1' when GSU_ROM_ACCESS = '1' and
 	                    (ROMST = ROMST_LOAD or ROMST = ROMST_CACHE or
@@ -392,15 +394,10 @@ begin
 				 PCF_WR_DATA when RAMST = RAMST_PCF and GSU_RAM_ACCESS = '1' else
 				 DI;
 	
---	RAM_WE_N <= '1' when ENABLE = '0' else 
---					WR_N when GSU_RAM_ACCESS = '0' else 
---					'0' when RAMST = RAMST_SAVE and GSU_RAM_ACCESS = '1' else 
---					not PCF_RW when RAMST = RAMST_PCF and GSU_RAM_ACCESS = '1' else 
---					'1';
 	RAM_WE_N <= '1' when ENABLE = '0' else 
 					WR_N when GSU_RAM_ACCESS = '0' else 
-					'0' when RAMST = RAMST_SAVE and RAM_LAST_CYCLE = '1' and GSU_RAM_ACCESS = '1' and EN = '1' else 
-					not PCF_RW when RAMST = RAMST_PCF and RAM_LAST_CYCLE = '1' and GSU_RAM_ACCESS = '1' else 
+					'0' when RAMST = RAMST_SAVE and GSU_RAM_ACCESS = '1' else 
+					not PCF_RW when RAMST = RAMST_PCF and GSU_RAM_ACCESS = '1' else 
 					'1';
 
 	RAM_CE_N <= '0' when ENABLE = '0' else 
@@ -669,9 +666,10 @@ begin
 				end if;
 				
 				if ROMST /= ROMST_IDLE and RON = '1' then
-					ROM_ACCESS_CNT <= ROM_ACCESS_CNT - 1;
-					if ROM_ACCESS_CNT = 0 then
+					if ROM_LAST_CYCLE = '1' then
 						ROM_ACCESS_CNT <= ROM_CYCLES;
+					elsif ROM_ACCESS_CNT /= 0 then
+						ROM_ACCESS_CNT <= ROM_ACCESS_CNT - 1;
 					end if;
 				else
 					ROM_ACCESS_CNT <= ROM_CYCLES;
@@ -922,6 +920,9 @@ begin
 		else
 			B := unsigned(R(to_integer(OP_N)));
 		end if;
+
+		TEMP := to_unsigned(0, TEMP'length);
+		MUL_TEMP := to_signed(0, MUL_TEMP'length);
 		
 		ALUR <= (others => '0');
 		MULR <= (others => '0');
@@ -1183,6 +1184,7 @@ begin
 			RPIX_DATA <= (others => '0');
 			BPP_CNT <= (others => '0');
 		elsif rising_edge(CLK) then
+			PCN <= '0';
 			if EN = '1' then
 				if CPU_EN = '1' then
 					if OP.OP = OP_CMODE then

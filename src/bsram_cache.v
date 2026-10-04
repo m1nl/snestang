@@ -58,8 +58,7 @@ module bsram_cache (
 
     localparam [3:0] CLEAR = 0, IDLE = 1, LOOKUP = 2, WRITEBACK = 3,
                      FILL = 5, WAIT_FILL = 6,
-                     ALLOCATE = 7, RESPOND = 9, PRIME = 10,
-                     READ = 11;
+                     ALLOCATE = 7, RESPOND = 9, PRIME = 10;
     reg [3:0] state;
 
     assign dbg_state = state;
@@ -88,7 +87,7 @@ module bsram_cache (
                     meta_we = 1;
                     index = clear_index;
                 end
-                READ: ;
+                IDLE: ;
                 LOOKUP: if (tag_match && pending_we) begin
                     data_we = 1;
                     data_din = block ? {pending_din, data_q[7:0]} : {data_q[15:8], pending_din};
@@ -113,12 +112,12 @@ module bsram_cache (
     end
 
     // Dedicated synchronous read outputs have no reset or alternate drivers.
-    // READ samples the address and RAMs on the acceptance edge. The outputs
+    // IDLE samples the address and RAMs on the acceptance edge. The outputs
     // hold the accepted request's word throughout lookup and SDRAM waits.
     // These outputs retain a dirty victim after FILL/ALLOCATE replaces the RAM
     // entry, until WRITEBACK copies the victim into the SDRAM request registers.
     always @(posedge clk) begin
-        if (state == READ) begin
+        if (state == IDLE) begin
             meta_q <= meta[front_addr[11:1]];
             data_q <= data[front_addr[11:1]];
         end else begin
@@ -164,10 +163,6 @@ module bsram_cache (
                 PRIME: state <= IDLE;
 
                 IDLE: if (front_req != front_ack) begin
-                    state <= READ;
-                end
-
-                READ: begin
                     front_ack <= front_req;
                     front_dout_reg <= front_din;
                     pending_addr <= front_addr;

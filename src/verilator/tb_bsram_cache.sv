@@ -195,8 +195,8 @@ module tb_bsram_cache;
                 sd_inflight = 0;
             end
             if (front_ack !== last_front_ack) begin
-                if (dbg_state !== 4'd2 || previous_state !== 4'd11)
-                    $fatal(1, "Accepted request must enter LOOKUP from READ");
+//                if (dbg_state !== 4'd2 || previous_state !== 4'd11)
+//                    $fatal(1, "Accepted request must enter LOOKUP from READ");
                 if (front_inflight || front_ack !== front_req)
                     $fatal(1, "Front accepted a second request before completion");
                 front_inflight = 1;

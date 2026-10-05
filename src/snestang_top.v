@@ -266,19 +266,9 @@ wire        ROM_CE_N;
 wire        ROM_OE_N;
 wire        ROM_WE_N;
 wire        ROM_WORD;
+wire        ROM_DONE;
 wire [15:0] ROM_D;
 wire [15:0] ROM_Q;
-
-wire [22:0] GSU_ROM_ADDR;
-
-wire        GSU_ROM_REQ;
-reg         GSU_ROM_ACCEPT;
-reg         GSU_ROM_DONE;
-wire [15:0] gsu_rom_word;
-reg         gsu_byte_sel;
-wire [7:0]  GSU_ROM_Q = gsu_byte_sel ? gsu_rom_word[15:8] : gsu_rom_word[7:0];
-wire        GSU_RAM_ACCESS;
-wire        GSU_ROM_ACCESS;
 
 wire [16:0] WRAM_ADDR;
 wire        WRAM_CE_N;
@@ -293,8 +283,8 @@ wire        BSRAM_CE_N;
 wire        BSRAM_OE_N;
 wire        BSRAM_WE_N;
 wire        BSRAM_RD_N;
-wire  [7:0] BSRAM_Q;
 wire        BSRAM_DONE;
+wire  [7:0] BSRAM_Q;
 wire  [7:0] BSRAM_D;
 
 wire [15:0] VRAM1_ADDR;
@@ -311,6 +301,9 @@ wire        ARAM_OE_N;
 wire        ARAM_WE_N;
 wire  [7:0] ARAM_Q;
 wire  [7:0] ARAM_D;
+
+wire        GSU_RAM_ACCESS;
+wire        GSU_ROM_ACCESS;
 
 wire BLEND = 1'b0;
 wire PAL   = 1'b0; // we do support NTSC only
@@ -453,11 +446,9 @@ main #(
 
     .ROM_ADDR(ROM_ADDR), .ROM_D(ROM_D), .ROM_Q(ROM_Q),
     .ROM_CE_N(ROM_CE_N), .ROM_OE_N(ROM_OE_N), .ROM_WE_N(ROM_WE_N),
-    .ROM_WORD(ROM_WORD),
+    .ROM_WORD(ROM_WORD), .ROM_DONE(ROM_DONE),
 
-    .GSU_ROM_ADDR(GSU_ROM_ADDR), .GSU_ROM_REQ(GSU_ROM_REQ), .GSU_ROM_OWNED(),
-    .GSU_ROM_ACCEPT(GSU_ROM_ACCEPT), .GSU_ROM_DONE(GSU_ROM_DONE),
-    .GSU_ROM_Q(GSU_ROM_Q), .GSU_RAM_ACCESS(GSU_RAM_ACCESS), .GSU_ROM_ACCESS(GSU_ROM_ACCESS),
+    .GSU_RAM_ACCESS(GSU_RAM_ACCESS), .GSU_ROM_ACCESS(GSU_ROM_ACCESS),
 
     .BSRAM_ADDR(BSRAM_ADDR), .BSRAM_D(BSRAM_D),	.BSRAM_Q(BSRAM_Q),
     .BSRAM_CE_N(BSRAM_CE_N), .BSRAM_OE_N(BSRAM_OE_N), .BSRAM_WE_N(BSRAM_WE_N),
@@ -502,14 +493,13 @@ main #(
 );
 `endif
 
-`ifdef DISABLE_SNES
-assign GSU_ROM_REQ = 1'b0;
-`endif
-
 // SDRAM for SNES ROM, WRAM and ARAM
 reg         cpu_port;
 wire [15:0] cpu_port0;
 wire [15:0] cpu_port1;
+reg         cpu_port0_done;
+reg         cpu_port1_done;
+reg         cpu_gsu;
 
 reg         cpu_req;
 wire        cpu_req_ack;
@@ -522,6 +512,8 @@ reg [22:0]  rom_addr_sd;
 reg         rom_word_valid;
 wire        rom_rd = ~ROM_CE_N; // && ~ROM_OE_N;
 // ROM_OE_N fires too late for SDRAM transaction to finish
+wire        rom_done = cpu_port0_done;
+reg         rom_done_r;
 
 reg [16:0]  wram_addr_sd;
 reg         wram_word_valid;
@@ -586,63 +578,14 @@ wire        aram_wr = ~ARAM_CE_N & ~ARAM_WE_N;
 assign ROM_Q  = (ROM_WORD || ~ROM_ADDR[0]) ? cpu_port0 : { cpu_port0[7:0], cpu_port0[15:8] };
 assign WRAM_Q = WRAM_ADDR[0] ? cpu_port1[15:8] : cpu_port1[7:0];
 assign BSRAM_Q = bsram_dout;
-
 assign ARAM_Q = ARAM_ADDR[0] ? aram_word[15:8] : aram_word[7:0];
+
+assign ROM_DONE = (rom_done_r != rom_done);
 
 `ifdef BSRAM_BRAM
 assign BSRAM_DONE = 1'b1;
 `else
 assign BSRAM_DONE = (bsram_done_r != bsram_done);
-`endif
-
-// The GSU uses its own SDRAM request and data path for ROM access.
-`ifdef CHIP_GSU
-reg        gsu_req_toggle, gsu_inflight, gsu_req_armed, gsu_ack_seen, gsu_done_seen;
-reg [22:1] gsu_word_addr, gsu_cached_addr;
-reg        gsu_cache_valid;
-wire       gsu_req_ack, gsu_read_done;
-
-always @(posedge mclk) begin
-    if (!resetn) begin
-        gsu_req_toggle <= gsu_req_ack;
-        gsu_inflight <= 0;
-        gsu_req_armed <= 1;
-        gsu_ack_seen <= gsu_req_ack;
-        gsu_done_seen <= gsu_read_done;
-        GSU_ROM_ACCEPT <= 0;
-        GSU_ROM_DONE <= 0;
-        gsu_cache_valid <= 0;
-
-    end else begin
-        GSU_ROM_ACCEPT <= 0;
-        GSU_ROM_DONE <= 0;
-        if (!GSU_ROM_REQ) gsu_req_armed <= 1;
-        if (gsu_req_ack != gsu_ack_seen) begin
-            gsu_ack_seen <= gsu_req_ack;
-            GSU_ROM_ACCEPT <= 1;
-        end
-        if (gsu_read_done != gsu_done_seen) begin
-            gsu_done_seen <= gsu_read_done;
-            GSU_ROM_DONE <= 1;
-            gsu_inflight <= 0;
-            gsu_cached_addr <= gsu_word_addr;
-            gsu_cache_valid <= 1;
-        end
-        if (GSU_ROM_REQ && gsu_req_armed && !gsu_inflight) begin
-            gsu_byte_sel <= GSU_ROM_ADDR[0];
-            gsu_req_armed <= 0;
-            if (gsu_cache_valid && gsu_cached_addr == GSU_ROM_ADDR[22:1]) begin
-                GSU_ROM_ACCEPT <= 1;
-                GSU_ROM_DONE <= 1;
-            end else begin
-                gsu_word_addr <= GSU_ROM_ADDR[22:1];
-                gsu_req_toggle <= ~gsu_req_toggle;
-                gsu_inflight <= 1;
-            end
-        end
-        if (loading || !snes_resetn) gsu_cache_valid <= 0;
-    end
-end
 `endif
 
 // Generate requests for the SDRAM ports.
@@ -657,6 +600,7 @@ always @(posedge mclk) begin
         cpu_req <= 0;
         bsram_req <= 0;
         aram_req <=0;
+        rom_done_r <= rom_done;
         bsram_done_r <= bsram_done;
 
     end else begin
@@ -669,6 +613,7 @@ always @(posedge mclk) begin
                 (~loading && (rom_rd && (ROM_ADDR[22:1] != rom_addr_sd[22:1] || !rom_word_valid)))) begin
                 rom_addr_sd <= loading ? loader_addr : ROM_ADDR[22:0];
                 rom_word_valid <= ~loading;
+                rom_done_r <= rom_done;
 
                 cpu_req <= ~cpu_req;
                 cpu_addr <= loading ? loader_addr : ROM_ADDR[22:0];
@@ -676,6 +621,7 @@ always @(posedge mclk) begin
                 cpu_ds <= 2'b11;
                 cpu_din <= {loader_do, loader_do_r};
                 cpu_port <= 0;
+                cpu_gsu <= GSU_ROM_ACCESS;
             end
 
             if ((wram_rd && (WRAM_ADDR[16:1] != wram_addr_sd[16:1] || !wram_word_valid)) ||
@@ -691,6 +637,7 @@ always @(posedge mclk) begin
                 cpu_ds <= {WRAM_ADDR[0], ~WRAM_ADDR[0]};
                 cpu_din <= {WRAM_D, WRAM_D};
                 cpu_port <= 1;
+                cpu_gsu <= 0;
             end
         end
 
@@ -832,12 +779,7 @@ sdram_snes_gsu sdram(
     // CPU accesses
     .cpu_addr(cpu_addr[22:1]), .cpu_port(cpu_port), .cpu_din(cpu_din), .cpu_port0(cpu_port0), .cpu_port1(cpu_port1),
     .cpu_req(cpu_req), .cpu_req_ack(cpu_req_ack), .cpu_we(cpu_we), .cpu_ds(cpu_ds),
-
-    // GSU rom accesses
-`ifdef CHIP_GSU
-    .gsu_addr(gsu_word_addr), .gsu_req(gsu_req_toggle),
-    .gsu_req_ack(gsu_req_ack), .gsu_done(gsu_read_done), .gsu_dout(gsu_rom_word),
-`endif
+    .cpu_port0_done(cpu_port0_done), .cpu_port1_done(cpu_port1_done), .cpu_gsu(cpu_gsu),
 
     // BSRAM accesses
 `ifdef BSRAM_BRAM

@@ -22,16 +22,13 @@ entity GSU is
 		SYSCLKR_CE	: in std_logic;
 		
 		TURBO			: in std_logic;
-		ROM_REQ     : out std_logic;
-		ROM_OWNED   : out std_logic;
-		ROM_ACCEPT  : in std_logic;
-		ROM_DONE    : in std_logic;
 
 		IRQ_N			: out std_logic;
 		
 		ROM_A   		: out std_logic_vector(20 downto 0);
 		ROM_DI		: in std_logic_vector(7 downto 0);
 		ROM_RD_N		: out std_logic;							--for MISTer sdram
+		ROM_DONE		: in std_logic;
 				
 		RAM_A			: out std_logic_vector(16 downto 0);
 		RAM_DI		: in std_logic_vector(7 downto 0);
@@ -187,8 +184,7 @@ architecture rtl of GSU is
 	signal SNES_RAM_A 		: std_logic_vector(16 downto 0);
 	signal INT_ROM_A 			: std_logic_vector(23 downto 0);
 	signal SNES_CACHE_ADDR 	: std_logic_vector(8 downto 0);
-	signal ROM_REQUESTED     : std_logic;
-	signal ROM_DATA_READY    : std_logic;
+	signal ROM_RD_CNT 		: unsigned(1 downto 0);
 
 begin
 
@@ -304,13 +300,9 @@ begin
 	end process; 
 	
 	GSU_ROM_ACCESS <= GSU_MEM_ACCESS and RON;
-	GSU_ROM_ACCESS_O <= GSU_ROM_ACCESS;
-	ROM_OWNED <= GSU_ROM_ACCESS;
-	ROM_REQ <= '1' when GSU_ROM_ACCESS = '1' and
-	                    (ROMST = ROMST_LOAD or ROMST = ROMST_CACHE or
-	                     (ROMST = ROMST_FETCH and IN_CACHE = '0')) and
-	                    ROM_REQUESTED = '0' and ROM_DATA_READY = '0' else '0';
 	GSU_RAM_ACCESS <= GSU_MEM_ACCESS and RAN;
+
+	GSU_ROM_ACCESS_O <= GSU_ROM_ACCESS;
 	GSU_RAM_ACCESS_O <= GSU_RAM_ACCESS;
 	
 	
@@ -585,30 +577,7 @@ begin
 	
 	--Memory buses
 	R14_CHANGE <= '1' when DST_REG = 14 and (MC.DREG(1) = '1' or MC.DREG(0) = '1') and MC.LAST_CYCLE = '1' else '0';
-	-- Keep the original minimum ROM timing even when the dedicated SDRAM
-	-- path returns early. A late response may extend the access.
-	ROM_LAST_CYCLE <= '1' when ROM_ACCESS_CNT = 0 and ROM_DATA_READY = '1' else '0';
-	process(CLK, RST_N)
-	begin
-		if RST_N = '0' then
-			ROM_REQUESTED <= '0';
-			ROM_DATA_READY <= '0';
-		elsif rising_edge(CLK) then
-			if ROM_DONE = '1' then
-				ROM_REQUESTED <= '0';
-				ROM_DATA_READY <= '1';
-			elsif ROM_REQ = '1' and ROM_ACCEPT = '1' then
-				ROM_REQUESTED <= '1';
-			elsif ROM_DATA_READY = '1' and
-			      (ROMST = ROMST_IDLE or
-			       (ROM_LAST_CYCLE = '1' and EN = '1' and RON = '1' and
-			        (ROMST = ROMST_LOAD or
-			         (ROMST = ROMST_FETCH and CPU_EN = '1') or
-			         (ROMST = ROMST_CACHE and CPU_EN = '0')))) then
-				ROM_DATA_READY <= '0';
-			end if;
-		end if;
-	end process;
+	ROM_LAST_CYCLE <= '1' when ROM_ACCESS_CNT = 0 and ROM_DONE = '1' else '0';
 	process(CLK, RST_N)
 	variable ROM_CYCLES : unsigned(2 downto 0);
 	begin
@@ -682,10 +651,18 @@ begin
 	begin
 		if RST_N = '0' then
 			ROM_RD_N <= '1';
+			ROM_RD_CNT <= (others => '0');
 		elsif rising_edge(CLK) then
 			ROM_RD_N <= '1';
 			if GSU_ROM_ACCESS = '0' then
 				if SYSCLKR_CE = '1' or SYSCLKF_CE = '1' then
+					ROM_RD_N <= '0';
+					ROM_RD_CNT <= (others => '0');
+				end if;
+			else
+				ROM_RD_CNT <= ROM_RD_CNT + 1;
+				if ROM_RD_CNT = 1 then
+					ROM_RD_CNT <= (others => '0');
 					ROM_RD_N <= '0';
 				end if;
 			end if;

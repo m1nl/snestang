@@ -517,9 +517,9 @@ wire        wram_req_ack;
 reg  [16:0] wram_addr_sd;
 wire [15:0] wram_word;
 reg   [7:0] wram_din;
-reg         wram_we;
 reg         wram_word_valid;
 reg         wram_wr_r;
+reg         wram_we;
 
 wire        wram_rd = ~WRAM_CE_N & ~WRAM_RD_N;
 wire        wram_wr = ~WRAM_CE_N & ~WRAM_WE_N;
@@ -529,8 +529,10 @@ wire        bsram_req_ack;
 reg  [19:0] bsram_addr_sd /* synthesis syn_keep=1 */;
 wire  [7:0] bsram_dout /* synthesis syn_keep=1 */;
 wire [15:0] bsram_word;
+reg         bsram_word_valid;
 reg   [7:0] bsram_din /* synthesis syn_keep=1 */;
 reg         bsram_wr_r /* synthesis syn_keep=1 */;
+reg         bsram_we;
 wire        bsram_done /* synthesis syn_keep=1 */;
 reg         bsram_gsu /* synthesis syn_keep=1 */;
 reg         bsram_done_r;
@@ -538,36 +540,41 @@ reg         bsram_done_r;
 wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_RD_N;
 wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
 
-`ifndef BSRAM_BRAM
+`ifdef BSRAM_BRAM
+wire bsram_write_request = 0;
+wire bsram_read_request  = 0;
+`elsif BSRAM_CACHE
 wire [19:0] bsram_sd_addr;
 wire [15:0] bsram_sd_din;
 wire [15:0] bsram_sd_word;
-wire [1:0]  bsram_sd_ds;
+wire  [1:0] bsram_sd_ds;
 wire        bsram_sd_we;
 wire        bsram_sd_req;
 wire        bsram_sd_ack;
 wire        bsram_sd_done;
 wire        bsram_cache_busy;
-wire  [3:0] bsram_cache_state;
 
 bsram_cache bsram_cache_inst (
     .clk(fclk), .resetn(resetn),
     .front_addr(bsram_addr_sd), .front_din(bsram_din),
-    .front_we(bsram_wr_r), .front_req(bsram_req),
+    .front_we(bsram_we), .front_req(bsram_req),
     .front_inhibit(~bsram_gsu), .front_ack(bsram_req_ack),
     .front_done(bsram_done), .front_dout(bsram_dout),
     .sd_addr(bsram_sd_addr), .sd_din(bsram_sd_din),
     .sd_ds(bsram_sd_ds), .sd_we(bsram_sd_we), .sd_req(bsram_sd_req),
     .sd_ack(bsram_sd_ack), .sd_done(bsram_sd_done), .sd_dout(bsram_sd_word),
-    .busy(bsram_cache_busy), .dbg_state(bsram_cache_state)
+    .busy(bsram_cache_busy), .dbg_state()
 );
-`else
-wire bsram_cache_busy = 1'b0;
-`endif
-
 // Update the tracked address/write strobe only when the cache can accept a request.
-wire        bsram_write_request = ((bsram_wr && (BSRAM_ADDR != bsram_addr_sd)) || (bsram_wr && ~bsram_wr_r)) && !bsram_cache_busy;
-wire        bsram_read_request  =  (bsram_rd && (BSRAM_ADDR != bsram_addr_sd)) && !bsram_cache_busy;
+wire bsram_write_request = ((bsram_wr && (BSRAM_ADDR != bsram_addr_sd)) || (bsram_wr && ~bsram_wr_r)) && !bsram_cache_busy;
+wire bsram_read_request  =  (bsram_rd && (BSRAM_ADDR != bsram_addr_sd)) && !bsram_cache_busy;
+`else
+// Update the tracked address/write strobe only when the cache can accept a request.
+wire bsram_write_request = ((bsram_wr && (BSRAM_ADDR != bsram_addr_sd)) || (bsram_wr && ~bsram_wr_r));
+wire bsram_read_request  =  (bsram_rd && (BSRAM_ADDR != bsram_addr_sd || !bsram_word_valid));
+
+assign bsram_dout = BSRAM_ADDR[0] ? bsram_word[15:8] : bsram_word[7:0];
+`endif
 
 reg         aram_req;
 wire        aram_req_ack;
@@ -599,15 +606,21 @@ assign BSRAM_DONE = (bsram_done_r != bsram_done);
 always @(posedge mclk) begin
     if (~resetn) begin
         wram_wr_r <= 0;
+        wram_we <= 0;
         bsram_wr_r <= 0;
+        bsram_we <= 0;
         aram_wr_r <= 0;
+
         rom_word_valid <= 0;
         wram_word_valid <= 0;
+        bsram_word_valid <= 0;
         aram_word_valid <= 0;
+
         wram_req <= 0;
         rom_req <= 0;
         bsram_req <= 0;
-        aram_req <=0;
+        aram_req <= 0;
+
         rom_done_r <= rom_done;
         bsram_done_r <= bsram_done;
 
@@ -648,22 +661,30 @@ always @(posedge mclk) begin
                 wram_addr_sd <= WRAM_ADDR;
                 wram_word_valid <= ~wram_wr;
                 wram_wr_r <= wram_wr;
+                wram_we <= wram_wr;
 
                 wram_req <= ~wram_req;
-                wram_we <= wram_wr;
                 wram_din <= WRAM_D;
             end
         end
 
+`ifndef BSRAM_CACHE
+        if (bsram_req == bsram_req_ack) begin
+`endif
         if (bsram_read_request || bsram_write_request) begin
             bsram_addr_sd <= BSRAM_ADDR;
+            bsram_word_valid <= ~bsram_wr;
             bsram_wr_r <= bsram_wr;
+            bsram_we <= bsram_wr;
             bsram_done_r <= bsram_done;
 
             bsram_req <= ~bsram_req;
             bsram_din <= BSRAM_D;
             bsram_gsu <= GSU_RAM_ACCESS;
         end
+`ifndef BSRAM_CACHE
+        end
+`endif
 
         if (aram_req == aram_req_ack) begin
             if ((aram_rd && (ARAM_ADDR[15:1] != aram_addr_sd[15:1] || !aram_word_valid)) ||
@@ -778,11 +799,7 @@ always @(posedge mclk) begin
     end
 end
 
-`ifdef CHIP_GSU
-sdram_snes_gsu sdram(
-`else
-sdram_snes_gsu sdram(
-`endif
+sdram_snes sdram(
     .clk(fclk), .mclk(mclk), .clkref(DOT_CLK_CE), .resetn(sdram_resetn), .ready(sdram_ready), .refreshing(sdram_refreshing),
 
     // SDRAM pins
@@ -799,15 +816,19 @@ sdram_snes_gsu sdram(
     .rom_req(rom_req), .rom_req_ack(rom_req_ack), .rom_we(rom_we), .rom_ds(rom_ds),
     .rom_done(rom_done), .rom_gsu(rom_gsu),
 
-    // BSRAM cache transfers (or disabled when BSRAM uses block RAM)
+    // BSRAM accesses
 `ifdef BSRAM_BRAM
     .bsram_addr(20'b0), .bsram_din(8'b0), .bsram_dout(),
     .bsram_req(1'b0), .bsram_req_ack(), .bsram_we(1'b0),
     .bsram_done(),
-`else
+`elsif BSRAM_CACHE
     .bsram_addr(bsram_sd_addr), .bsram_din(bsram_sd_din), .bsram_dout(bsram_sd_word),
     .bsram_req(bsram_sd_req), .bsram_req_ack(bsram_sd_ack), .bsram_we(bsram_sd_we),
     .bsram_ds(bsram_sd_ds), .bsram_done(bsram_sd_done), .bsram_gsu(bsram_gsu),
+`else
+    .bsram_addr(bsram_addr_sd), .bsram_din({bsram_din, bsram_din}), .bsram_dout(bsram_word),
+    .bsram_req(bsram_req), .bsram_req_ack(bsram_req_ack), .bsram_we(bsram_we),
+    .bsram_ds({bsram_addr_sd[0], ~bsram_addr_sd[0]}), .bsram_done(bsram_done), .bsram_gsu(bsram_gsu),
 `endif
 
     // ARAM accesses

@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // Sparse SDR SDRAM pin model: CL=2, one-word bursts, per-bank active rows.
 // Only words used by this directed test are stored.
-module gsu_test_sdram #(parameter ROW_BITS=13) (
+module test_sdram #(parameter ROW_BITS=13) (
     input clk, input [12:0] addr, input [1:0] ba, dqm,
     input cs_n, ras_n, cas_n, we_n, inout [15:0] dq
 );
@@ -58,7 +58,7 @@ module gsu_test_sdram #(parameter ROW_BITS=13) (
     assign dq=read_valid[2] ? rd2 : 16'bz;
 endmodule
 
-module tb_sdram_gsu_shared;
+module tb_sdram_3ch_shared;
     parameter DONE_DELAY=0;
     parameter ROM_DELAY=1;
 `ifdef SDRAM_16M
@@ -134,7 +134,7 @@ module tb_sdram_gsu_shared;
     wire refreshing,ready;
     wire [23:0] total_refresh;
     sdram_snes_gsu #(.BSRAM_DONE_DELAY(DONE_DELAY),.ROM_DONE_DELAY(ROM_DELAY)) dut(.*);
-    gsu_test_sdram #(.ROW_BITS(ROW_BITS)) chip(
+    test_sdram #(.ROW_BITS(ROW_BITS)) chip(
         .clk(~clk), .addr(SDRAM_A), .ba(SDRAM_BA), .dqm(SDRAM_DQM),
         .cs_n(SDRAM_nCS), .ras_n(SDRAM_nRAS), .cas_n(SDRAM_nCAS),
         .we_n(SDRAM_nWE), .dq(SDRAM_DQ));

@@ -1,12 +1,12 @@
-# GSU SDRAM regression
+# 3ch SDRAM regression
 
 Run from `src` with Icarus Verilog installed:
 
 ```sh
-make -C verilator -f Makefile.sdram_gsu test
+make -C verilator -f Makefile.sdram_3ch test
 ```
 
-The runner tests the production `sdram_cl2_3ch_gsu.v` controller with a sparse
+The runner tests the production `sdram_cl2_3ch.v` controller with a sparse
 SDRAM pin model in eight configurations: 16 MiB / 32 MiB SDRAM, with every
 combination of `ROM_DONE_DELAY` and `BSRAM_DONE_DELAY` disabled/enabled.
 Executables go into `/tmp/snestang-sdram-gsu` by default (`BUILD_DIR` overrides it).

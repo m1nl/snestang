@@ -38,7 +38,9 @@ entity GSU is
 		RAM_DONE		: in std_logic;
 
 		GSU_RAM_ACCESS_O		: out std_logic;
-		GSU_ROM_ACCESS_O		: out std_logic
+
+		GSU_ROM_ACCESS_O		: out std_logic;
+		GSU_ROM_CE_N		: out std_logic
 	);
 end GSU;
 
@@ -299,12 +301,15 @@ begin
 		end if;
 	end process; 
 	
-	GSU_ROM_ACCESS <= GSU_MEM_ACCESS and RON;
 	GSU_RAM_ACCESS <= GSU_MEM_ACCESS and RAN;
+	GSU_ROM_ACCESS <= GSU_MEM_ACCESS and RON;
 
-	GSU_ROM_ACCESS_O <= GSU_ROM_ACCESS;
 	GSU_RAM_ACCESS_O <= GSU_RAM_ACCESS;
-	
+	GSU_ROM_ACCESS_O <= GSU_ROM_ACCESS;
+
+	GSU_ROM_CE_N <= '0' when GSU_ROM_ACCESS = '1' and
+			(ROMST = ROMST_LOAD or ROMST = ROMST_CACHE or
+			(ROMST = ROMST_FETCH and IN_CACHE = '0')) else '1';
 	
 	SFR <= FLAG_IRQ & "0" & "0" & FLAG_B & "0" & "0" & FLAG_ALT2 & FLAG_ALT1 & "0" & FLAG_R & FLAG_GO & FLAG_OV & FLAG_S & FLAG_CY & FLAG_Z & "0";
 	

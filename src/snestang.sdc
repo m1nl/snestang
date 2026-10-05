@@ -33,6 +33,7 @@ set_multicycle_path 2 -hold -start -from [get_clocks {fclk}] -to [get_clocks {mc
 // false paths
 //set_false_path -from [get_clocks {uclk}] -to [get_clocks {mclk}]
 //set_false_path -from [get_regs {main/SNES/smp/CPUO*}] -to [get_regs {sdram/dq_out*}]
+set_false_path -from [get_nets {smc_*}]
 
 // The hdmi audio sample words cross from the 48kHz audio clock into the pixel
 // clock domain through a toggle handshake: the data is written a full audio

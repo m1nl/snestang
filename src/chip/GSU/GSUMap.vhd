@@ -70,7 +70,7 @@ architecture rtl of GSUMap is
 	signal MAP_SEL	  	: std_logic;
 	signal GSU_RAM_ACCESS_I		: std_logic;
 	signal GSU_ROM_ACCESS_I		: std_logic;
-	signal GSU_ROM_ACCESS_N		: std_logic;
+	signal GSU_ROM_CE_N		: std_logic;
 
 
 	
@@ -110,15 +110,16 @@ begin
 				
 		TURBO			=> TURBO,
 
-		GSU_RAM_ACCESS_O => GSU_RAM_ACCESS_I,
-		GSU_ROM_ACCESS_O => GSU_ROM_ACCESS_I
+		GSU_RAM_ACCESS_O	=> GSU_RAM_ACCESS_I,
+
+		GSU_ROM_ACCESS_O	=> GSU_ROM_ACCESS_I,
+		GSU_ROM_CE_N		=> GSU_ROM_CE_N
 	);
 	
 	ROM_ADDR 	<= ("00" & ROM_A) and ROM_MASK(22 downto 0);
---	ROM_CE_N 	<= ROMSEL_N when GSU_ROM_ACCESS_I = '0' else GSU_ROM_ACCESS_N;
-	ROM_CE_N 	<= '0' when GSU_ROM_ACCESS_I = '0' else GSU_ROM_ACCESS_N;
+	ROM_CE_N 	<= ROMSEL_N when GSU_ROM_ACCESS_I = '0' else GSU_ROM_CE_N;
 
-	ROM_WORD		<= '0';
+	ROM_WORD	<= '0';
 	
 	BSRAM_ADDR 	<= "0000" & RAM_A(15 downto 0);
 	BSRAM_OE_N 	<= not RAM_WE_N;
@@ -128,5 +129,4 @@ begin
 	GSU_RAM_ACCESS <= GSU_RAM_ACCESS_I and MAP_SEL;
 	GSU_ROM_ACCESS <= GSU_ROM_ACCESS_I and MAP_SEL;
 
-	GSU_ROM_ACCESS_N <= not GSU_ROM_ACCESS_I;
 end rtl;

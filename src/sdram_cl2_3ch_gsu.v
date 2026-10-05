@@ -57,7 +57,7 @@ module sdram_snes_gsu
     // Delay done signals by 3 cycles
     // only needed if dout is sampled directly
     // in mclk on done trigger
-    parameter CPU_DONE_DELAY   = 1,
+    parameter ROM_DONE_DELAY   = 1,
     parameter BSRAM_DONE_DELAY = 0,
 
     // Time delays for 86MHz max clock (min clock cycle 11.6ns)
@@ -89,18 +89,22 @@ module sdram_snes_gsu
 
     // CPU access uses bank 0 and the first 2MB of bank 1 (6MB total).
     // WRAM occupies the final 128KB of that 6MB region.
-    input      [15:0] cpu_din       /* synthesis syn_keep=1 */,
-    input             cpu_port,
-    output reg [15:0] cpu_port0,    // output register for bank 0
-    output reg [15:0] cpu_port1,    // output register for bank 1
-    output reg        cpu_port0_done,
-    output reg        cpu_port1_done,
-    input             cpu_gsu,
-    input      [22:1] cpu_addr,     // 6MB SNES memory, with WRAM at end
-    input             cpu_req,
-    output reg        cpu_req_ack,
-    input             cpu_we,
-    input       [1:0] cpu_ds,       // which bytes to enable
+    input      [22:1] rom_addr,     // 6MB SNES memory, with WRAM at end
+    input      [15:0] rom_din,
+    output reg [15:0] rom_dout,     // output register for bank 0
+    output reg        rom_done,
+    input             rom_gsu,
+    input             rom_req,
+    output reg        rom_req_ack,
+    input             rom_we,
+    input       [1:0] rom_ds,       // which bytes to enable
+
+    input      [16:0] wram_addr,    // 6MB SNES memory, with WRAM at end
+    input       [7:0] wram_din,
+    output reg [15:0] wram_dout,    // output register for bank 0
+    input             wram_req,
+    output reg        wram_req_ack,
+    input             wram_we,
 
     input      [19:0] bsram_addr,   // only [16:0], max 128KB
     input      [15:0] bsram_din,
@@ -202,20 +206,21 @@ reg  [2:0] oe_latch;
 reg  [2:0] we_latch;
 reg  [1:0] ds[3];
 
-localparam PORT_NONE  = 2'd0;
+localparam PORT_NONE  = 3'd0;
 
-localparam PORT_CPU   = 2'd1;
-localparam PORT_BSRAM = 2'd2;
-localparam PORT_RV    = 2'd3;
+localparam PORT_WRAM  = 3'd1;
+localparam PORT_ROM   = 3'd2;
+localparam PORT_BSRAM = 3'd3;
+localparam PORT_RV    = 3'd4;
 
-localparam PORT_ARAM  = 2'd1;
+localparam PORT_ARAM  = 3'd1;
 
-localparam PORT_VRAM  = 2'd1;
-localparam PORT_VRAM1 = 2'd2;
-localparam PORT_VRAM2 = 2'd3;
+localparam PORT_VRAM  = 3'd1;
+localparam PORT_VRAM1 = 3'd2;
+localparam PORT_VRAM2 = 3'd3;
 
-reg  [1:0] port[3];
-reg  [1:0] next_port[3];
+reg  [2:0] port[3];
+reg  [2:0] next_port[3];
 reg [24:0] next_addr[3];  // 2-bit bank #, then 8MB byte address in bank
 reg [15:0] next_din[3];
 reg  [1:0] next_ds[3];
@@ -225,9 +230,8 @@ reg  [2:0] next_oe;
 reg aram_req_last;
 reg write_delay;
 reg clkref_r;
-reg cpu_port_latch;
 
-reg       rv_stall;
+reg       gsu_stall;
 reg [4:0] rv_stall_cnt;
 
 always @(posedge clk)
@@ -268,30 +272,37 @@ always @(*) begin
     next_oe[0] = 0;
     next_ds[0] = 0;
     next_din[0] = 0;
-    if (cpu_req ^ cpu_req_ack && (!cpu_gsu || (!need_refresh && !rv_stall))) begin
-        next_port[0] = PORT_CPU;
-        next_din[0]  = cpu_din;
-        next_ds[0]   = cpu_ds;
+    if (wram_req ^ wram_req_ack) begin
+        next_port[0] = PORT_WRAM;
+        next_din[0]  = { wram_din, wram_din };
+        next_we[0]   = wram_we;
+        next_oe[0]   = ~wram_we;
+        next_ds[0]   = {wram_addr[0], ~wram_addr[0]};
 `ifdef SDRAM_16M
-        if (cpu_port) begin
-            // Remap logical WRAM at 0x7E0000-0x7FFFFF to the final
-            // 128KB of the 6MB CPU region: bank 1, 0x1E0000-0x1FFFFF.
-            next_addr[0] = { 2'b01, 2'b00, 4'b1111, cpu_addr[16:1], 1'b0 };
-            next_we[0]   = cpu_we;
-            next_oe[0]   = ~cpu_we;
-        end else if (cpu_addr[22:21] != 2'b11) begin
+        // Remap logical WRAM at 0x7E0000-0x7FFFFF to the final
+        // 128KB of the 6MB CPU region: bank 1, 0x1E0000-0x1FFFFF.
+        next_addr[0] = { 2'b01, 2'b00, 4'b1111, wram_addr[16:1], 1'b0 };
+`else
+        next_addr[0] = { 2'b00, 6'b111111, wram_addr[16:1], 1'b0 };
+`endif
+    end else if (rom_req ^ rom_req_ack && (!rom_gsu || !gsu_stall)) begin
+        next_port[0] = PORT_ROM;
+        next_din[0]  = rom_din;
+        next_ds[0]   = rom_ds;
+`ifdef SDRAM_16M
+        if (rom_addr[22:21] != 2'b11) begin
             // ROM is limited to 0x000000-0x5FFFFF. A12 is unused on
             // the 16MB SDRAM, so bank 1 starts at CPU address 0x400000.
-            next_addr[0] = { 1'b0, cpu_addr[22], 1'b0, cpu_addr[21:1], 1'b0 };
-            next_we[0]   = cpu_we;
-            next_oe[0]   = ~cpu_we;
+            next_addr[0] = { 1'b0, rom_addr[22], 1'b0, rom_addr[21:1], 1'b0 };
+            next_we[0]   = rom_we;
+            next_oe[0]   = ~rom_we;
         end
 `else
-        next_addr[0] = { 2'b00, cpu_addr, 1'b0 };       // CPU uses bank 0, WRAM at the end
-        next_we[0]   = cpu_we;
-        next_oe[0]   = ~cpu_we;
+        next_addr[0] = { 2'b00, rom_addr[22:1], 1'b0 };
+        next_we[0]   = rom_we;
+        next_oe[0]   = ~rom_we;
 `endif
-    end else if (bsram_req ^ bsram_req_ack && (!bsram_gsu || (!need_refresh && !rv_stall))) begin
+    end else if (bsram_req ^ bsram_req_ack && (!bsram_gsu || !gsu_stall)) begin
         next_port[0] = PORT_BSRAM;
         next_addr[0] = { 2'b01, 3'b011, bsram_addr };   // BSRAM at physical 3MB in bank 1
         next_din[0] = bsram_din;
@@ -395,17 +406,17 @@ always @(posedge clk, negedge resetn) begin
         setup <= 0;
         refresh_cnt <= 0;
         rv_stall_cnt <= 0;
-        rv_stall <= 0;
+        gsu_stall <= 0;
         dq_oen <= 1;
         SDRAM_DQM <= 2'b0;
-        cpu_req_ack <= 0;
+        wram_req_ack <= 0;
+        rom_req_ack <= 0;
         bsram_req_ack <= 0;
         aram_req_ack <= 0;
         rv_req_ack <= 0;
         vram1_ack <= 0;
         vram2_ack <= 0;
-        cpu_port0_done <= 0;
-        cpu_port1_done <= 0;
+        rom_done <= 0;
         bsram_done <= 0;
 
     end else begin
@@ -442,7 +453,7 @@ always @(posedge clk, negedge resetn) begin
             end
         end
         if (normal) begin
-            rv_stall <= &rv_stall_cnt;
+            gsu_stall <= &rv_stall_cnt || need_refresh;
 
             cycle <= {cycle[6:0], cycle[7]};
 
@@ -458,7 +469,6 @@ always @(posedge clk, negedge resetn) begin
             // bank 0,1 - ROM, WRAM, BSRAM and RV
             if (cycle[0]) begin
                 port[0] <= next_port[0];
-                cpu_port_latch <= cpu_port;
                 if (next_port[0] == PORT_RV) rv_stall_cnt <= 0;
                 { we_latch[0], oe_latch[0] } <= { next_we[0], next_oe[0] };
                 addr_latch[0] <= next_addr[0];
@@ -535,7 +545,8 @@ always @(posedge clk, negedge resetn) begin
             end
             if (cycle[2]) begin
                 case (port[0])
-                PORT_CPU: cpu_req_ack <= cpu_req;
+                PORT_WRAM: wram_req_ack <= wram_req;
+                PORT_ROM: rom_req_ack <= rom_req;
                 PORT_BSRAM: begin
                     bsram_req_ack <= bsram_req;
                     if (we_latch[0]) bsram_done <= ~bsram_done;
@@ -585,16 +596,11 @@ always @(posedge clk, negedge resetn) begin
             // ROM, WRAM, BSRAM and RV
             if (cycle[5] && oe_latch[0]) begin
                 case (port[0])
-                PORT_CPU: begin
-                    if (cpu_port_latch) begin
-                        cpu_port1 <= dq_in;
-                        if (!CPU_DONE_DELAY)
-                            cpu_port1_done <= ~cpu_port1_done;
-                    end else begin
-                        cpu_port0 <= dq_in;
-                        if (!CPU_DONE_DELAY)
-                            cpu_port0_done <= ~cpu_port0_done;
-                    end
+                PORT_WRAM: wram_dout <= dq_in;
+                PORT_ROM: begin
+                    rom_dout <= dq_in;
+                    if (!ROM_DONE_DELAY)
+                        rom_done <= ~rom_done;
                 end
                 PORT_BSRAM: begin
                     bsram_dout <= dq_in;
@@ -607,14 +613,9 @@ always @(posedge clk, negedge resetn) begin
             end
             if (cycle[7] && oe_latch[0] && ~we_latch[0]) begin
                 case (port[0])
-                PORT_CPU: begin
-                    if (cpu_port_latch) begin
-                        if (CPU_DONE_DELAY)
-                            cpu_port1_done <= ~cpu_port1_done;
-                    end else begin
-                        if (CPU_DONE_DELAY)
-                            cpu_port0_done <= ~cpu_port0_done;
-                    end
+                PORT_ROM: begin
+                    if (ROM_DONE_DELAY)
+                        rom_done <= ~rom_done;
                 end
                 PORT_BSRAM: begin
                     if (BSRAM_DONE_DELAY)

@@ -398,9 +398,11 @@ reg loaded;
 
 reg [22:0] loader_addr = 0;
 
-wire [7:0] rom_type;
-wire [3:0] rom_size, ram_size;
-wire [23:0] rom_mask, ram_mask;
+wire  [7:0] smc_rom_type /* synthesis syn_keep=1 */;
+wire  [3:0] smc_rom_size /* synthesis syn_keep=1 */;
+wire  [3:0] smc_ram_size /* synthesis syn_keep=1 */;
+wire [23:0] smc_rom_mask /* synthesis syn_keep=1 */;
+wire [23:0] smc_ram_mask /* synthesis syn_keep=1 */;
 
 wire sdram_refreshing;
 
@@ -442,7 +444,7 @@ main #(
     .MCLK(mclk), .ACLK(mclk), .RESET_N(snes_resetn), .ENABLE(snes_enable),
     .SYSCLKF_CE(sysclkf_ce), .SYSCLKR_CE(sysclkr_ce), .REFRESH(refresh),
 
-    .ROM_TYPE(rom_type), .ROM_MASK(rom_mask), .RAM_MASK(ram_mask), .RAM_SIZE(ram_size),
+    .ROM_TYPE(smc_rom_type), .ROM_MASK(smc_rom_mask), .RAM_MASK(smc_ram_mask), .RAM_SIZE(smc_ram_size),
 
     .ROM_ADDR(ROM_ADDR), .ROM_D(ROM_D), .ROM_Q(ROM_Q),
     .ROM_CE_N(ROM_CE_N), .ROM_OE_N(ROM_OE_N), .ROM_WE_N(ROM_WE_N),
@@ -494,45 +496,46 @@ main #(
 `endif
 
 // SDRAM for SNES ROM, WRAM and ARAM
-reg         cpu_port;
-wire [15:0] cpu_port0;
-wire [15:0] cpu_port1;
-reg         cpu_port0_done;
-reg         cpu_port1_done;
-reg         cpu_gsu;
-
-reg         cpu_req;
-wire        cpu_req_ack;
-reg  [1:0]  cpu_ds;
-reg [15:0]  cpu_din;
-reg [22:0]  cpu_addr;
-reg         cpu_we;
-
-reg [22:0]  rom_addr_sd;
+reg         rom_req;
+wire        rom_req_ack;
+reg  [22:0] rom_addr_sd;
+wire [15:0] rom_word;
+reg  [15:0] rom_din;
+reg   [1:0] rom_ds;
+reg         rom_we;
 reg         rom_word_valid;
-wire        rom_rd = ~ROM_CE_N; // && ~ROM_OE_N;
-// ROM_OE_N fires too late for SDRAM transaction to finish
-wire        rom_done = cpu_port0_done;
+reg         rom_gsu;
+reg         rom_done;
 reg         rom_done_r;
 
-reg [16:0]  wram_addr_sd;
+wire        rom_rd = ~ROM_CE_N; // && ~ROM_OE_N;
+// ROM_OE_N fires too late for SDRAM transaction to finish
+
+reg         wram_req;
+wire        wram_req_ack;
+reg  [16:0] wram_addr_sd;
+wire [15:0] wram_word;
+reg   [7:0] wram_din;
+reg         wram_we;
 reg         wram_word_valid;
 reg         wram_wr_r;
+
 wire        wram_rd = ~WRAM_CE_N & ~WRAM_RD_N;
 wire        wram_wr = ~WRAM_CE_N & ~WRAM_WE_N;
 
 reg         bsram_req;
 wire        bsram_req_ack;
 reg  [19:0] bsram_addr_sd /* synthesis syn_keep=1 */;
-reg   [7:0] bsram_din /* synthesis syn_keep=1 */;
 wire  [7:0] bsram_dout /* synthesis syn_keep=1 */;
 wire [15:0] bsram_word;
+reg   [7:0] bsram_din /* synthesis syn_keep=1 */;
 reg         bsram_wr_r /* synthesis syn_keep=1 */;
-wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_RD_N;
-wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
 wire        bsram_done /* synthesis syn_keep=1 */;
 reg         bsram_gsu /* synthesis syn_keep=1 */;
 reg         bsram_done_r;
+
+wire        bsram_rd = ~BSRAM_CE_N & ~BSRAM_RD_N;
+wire        bsram_wr = ~BSRAM_CE_N & ~BSRAM_WE_N;
 
 `ifndef BSRAM_BRAM
 wire [19:0] bsram_sd_addr;
@@ -575,8 +578,8 @@ reg         aram_wr_r;
 wire        aram_rd = ~ARAM_CE_N & ~ARAM_OE_N;
 wire        aram_wr = ~ARAM_CE_N & ~ARAM_WE_N;
 
-assign ROM_Q  = (ROM_WORD || ~ROM_ADDR[0]) ? cpu_port0 : { cpu_port0[7:0], cpu_port0[15:8] };
-assign WRAM_Q = WRAM_ADDR[0] ? cpu_port1[15:8] : cpu_port1[7:0];
+assign ROM_Q  = (ROM_WORD || ~ROM_ADDR[0]) ? rom_word : { rom_word[7:0], rom_word[15:8] };
+assign WRAM_Q = WRAM_ADDR[0] ? wram_word[15:8] : wram_word[7:0];
 assign BSRAM_Q = bsram_dout;
 assign ARAM_Q = ARAM_ADDR[0] ? aram_word[15:8] : aram_word[7:0];
 
@@ -597,7 +600,8 @@ always @(posedge mclk) begin
         rom_word_valid <= 0;
         wram_word_valid <= 0;
         aram_word_valid <= 0;
-        cpu_req <= 0;
+        wram_req <= 0;
+        rom_req <= 0;
         bsram_req <= 0;
         aram_req <=0;
         rom_done_r <= rom_done;
@@ -608,22 +612,32 @@ always @(posedge mclk) begin
         if (!bsram_wr) bsram_wr_r <= 0;
         if (!aram_wr) aram_wr_r <= 0;
 
-        if (cpu_req == cpu_req_ack) begin
-            if ((loading  && loader_do_valid && loader_do_ready && header_finished && loader_addr[0]) ||
-                (~loading && (rom_rd && (ROM_ADDR[22:1] != rom_addr_sd[22:1] || !rom_word_valid)))) begin
-                rom_addr_sd <= loading ? loader_addr : ROM_ADDR[22:0];
-                rom_word_valid <= ~loading;
+        if (rom_req == rom_req_ack) begin
+            if (rom_rd && (ROM_ADDR[22:1] != rom_addr_sd[22:1] || !rom_word_valid)) begin
+                rom_addr_sd <= ROM_ADDR[22:0];
+                rom_word_valid <= 1;
                 rom_done_r <= rom_done;
 
-                cpu_req <= ~cpu_req;
-                cpu_addr <= loading ? loader_addr : ROM_ADDR[22:0];
-                cpu_we <= loading;
-                cpu_ds <= 2'b11;
-                cpu_din <= {loader_do, loader_do_r};
-                cpu_port <= 0;
-                cpu_gsu <= GSU_ROM_ACCESS;
+                rom_req <= ~rom_req;
+                rom_we <= 0;
+                rom_ds <= 2'b11;
+                rom_gsu <= GSU_ROM_ACCESS;
             end
 
+            if (loading && loader_do_valid && loader_do_ready && header_finished && loader_addr[0]) begin
+                rom_addr_sd <= loader_addr;
+                rom_word_valid <= 0;
+                rom_done_r <= rom_done;
+
+                rom_req <= ~rom_req;
+                rom_we <= 1;
+                rom_ds <= 2'b11;
+                rom_din <= {loader_do, loader_do_r};
+                rom_gsu <= 0;
+            end
+        end
+
+        if (wram_req == wram_req_ack) begin
             if ((wram_rd && (WRAM_ADDR[16:1] != wram_addr_sd[16:1] || !wram_word_valid)) ||
                 (wram_wr && (WRAM_ADDR[16:0] != wram_addr_sd[16:0])) ||
                 (wram_wr && ~wram_wr_r)) begin
@@ -631,13 +645,9 @@ always @(posedge mclk) begin
                 wram_word_valid <= ~wram_wr;
                 wram_wr_r <= wram_wr;
 
-                cpu_req <= ~cpu_req;
-                cpu_addr <= {6'b111_111, WRAM_ADDR[16:0]};
-                cpu_we <= wram_wr;
-                cpu_ds <= {WRAM_ADDR[0], ~WRAM_ADDR[0]};
-                cpu_din <= {WRAM_D, WRAM_D};
-                cpu_port <= 1;
-                cpu_gsu <= 0;
+                wram_req <= ~wram_req;
+                wram_we <= wram_wr;
+                wram_din <= WRAM_D;
             end
         end
 
@@ -776,10 +786,14 @@ sdram_snes_gsu sdram(
     .SDRAM_nCS(O_sdram_cs_n), .SDRAM_nWE(O_sdram_wen_n), .SDRAM_nRAS(O_sdram_ras_n),
     .SDRAM_nCAS(O_sdram_cas_n), .SDRAM_CKE(O_sdram_cke), .SDRAM_DQM(O_sdram_dqm),
 
-    // CPU accesses
-    .cpu_addr(cpu_addr[22:1]), .cpu_port(cpu_port), .cpu_din(cpu_din), .cpu_port0(cpu_port0), .cpu_port1(cpu_port1),
-    .cpu_req(cpu_req), .cpu_req_ack(cpu_req_ack), .cpu_we(cpu_we), .cpu_ds(cpu_ds),
-    .cpu_port0_done(cpu_port0_done), .cpu_port1_done(cpu_port1_done), .cpu_gsu(cpu_gsu),
+    // WRAM accesses
+    .wram_addr(wram_addr_sd), .wram_din(wram_din), .wram_dout(wram_word),
+    .wram_req(wram_req), .wram_req_ack(wram_req_ack), .wram_we(wram_we),
+
+    // ROM accesses
+    .rom_addr(rom_addr_sd[22:1]), .rom_din(rom_din), .rom_dout(rom_word),
+    .rom_req(rom_req), .rom_req_ack(rom_req_ack), .rom_we(rom_we), .rom_ds(rom_ds),
+    .rom_done(rom_done), .rom_gsu(rom_gsu),
 
     // BSRAM accesses
 `ifdef BSRAM_BRAM
@@ -815,7 +829,7 @@ sdram_snes_gsu sdram(
 `endif
 );
 
-assign loader_do_ready = cpu_req == cpu_req_ack;
+assign loader_do_ready = (rom_req == rom_req_ack);
 
 reg [7:0] loader_do_r;
 reg loading_r;
@@ -824,8 +838,9 @@ reg loading_r;
 smc_parser smc (
     .clk(mclk), .resetn(resetn & ~(loading & ~loading_r)),
     .rom_d(loader_do), .rom_strb(loader_do_valid),
-    .rom_type(rom_type), .rom_mask(rom_mask), .ram_mask(ram_mask),
-    .rom_size(rom_size), .ram_size(ram_size),
+    .rom_type(smc_rom_type),
+    .rom_mask(smc_rom_mask), .rom_size(smc_rom_size),
+    .ram_mask(smc_ram_mask), .ram_size(smc_ram_size),
     .header_finished(header_finished)
 );
 

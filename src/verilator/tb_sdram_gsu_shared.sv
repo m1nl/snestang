@@ -60,19 +60,33 @@ endmodule
 
 module tb_sdram_gsu_shared;
     parameter DONE_DELAY=0;
+    parameter ROM_DELAY=1;
 `ifdef SDRAM_16M
     localparam ROW_BITS=12;
-    localparam [22:0] BSRAM_BASE=23'h300000;
 `else
     localparam ROW_BITS=13;
-    localparam [22:0] BSRAM_BASE=23'h700000;
 `endif
-    localparam [23:0] BANK2_WORD=24'(2 << (ROW_BITS+9));
+    localparam [23:0] BANK_WORDS=24'(1 << (ROW_BITS+9));
     function [23:0] bs_index(input [19:0] address);
-        bs_index=BANK2_WORD + 24'(BSRAM_BASE>>1) + 24'(address>>1);
+        bs_index=BANK_WORDS + 24'(23'h300000>>1) + 24'(address>>1);
     endfunction
     function [23:0] ar_index(input [15:0] address);
-        ar_index=BANK2_WORD + 24'(address>>1);
+        // A12 is unused on 16 MiB SDRAM, wrapping 0x780000 to 0x380000.
+        ar_index=2*BANK_WORDS + (24'(23'h780000>>1) % BANK_WORDS) + 24'(address>>1);
+    endfunction
+    function [23:0] rom_index(input [22:0] address);
+`ifdef SDRAM_16M
+        rom_index=address[22]*BANK_WORDS + 24'(address[21:1]);
+`else
+        rom_index=24'(address>>1);
+`endif
+    endfunction
+    function [23:0] wr_index(input [16:0] address);
+`ifdef SDRAM_16M
+        wr_index=BANK_WORDS + 24'(23'h1e0000>>1) + 24'(address>>1);
+`else
+        wr_index=24'(23'h7e0000>>1) + 24'(address>>1);
+`endif
     endfunction
     reg clk=0;
     always #5 clk=~clk;
@@ -83,22 +97,23 @@ module tb_sdram_gsu_shared;
     wire [12:0] SDRAM_A;
     wire [1:0] SDRAM_DQM, SDRAM_BA;
     wire SDRAM_nCS, SDRAM_nWE, SDRAM_nRAS, SDRAM_nCAS, SDRAM_CKE;
-    reg [15:0] cpu_din=0;
-    reg cpu_port=0, cpu_req=0, cpu_we=0;
-    reg [22:1] cpu_addr=0;
-    reg [1:0] cpu_ds=3;
-    wire cpu_req_ack;
-    wire [15:0] cpu_port0,cpu_port1;
+    reg [22:1] rom_addr=0;
+    reg [15:0] rom_din=0;
+    reg [1:0] rom_ds=3;
+    reg rom_req=0,rom_we=0,rom_gsu=0;
+    wire rom_req_ack,rom_done;
+    wire [15:0] rom_dout;
+    reg [16:0] wram_addr=0;
+    reg [7:0] wram_din=0;
+    reg wram_req=0,wram_we=0;
+    wire wram_req_ack;
+    wire [15:0] wram_dout;
     reg [19:0] bsram_addr=0;
     reg [15:0] bsram_din=0;
     reg [1:0] bsram_ds=3;
-    reg bsram_req=0,bsram_we=0;
+    reg bsram_req=0,bsram_we=0,bsram_gsu=1;
     wire [15:0] bsram_dout;
     wire bsram_req_ack,bsram_done;
-    reg [22:1] gsu_addr=0;
-    reg gsu_req=0;
-    wire gsu_req_ack,gsu_done;
-    wire [15:0] gsu_dout;
     reg [15:0] aram_addr=0;
     reg [7:0] aram_din=0;
     reg aram_req=0,aram_we=0;
@@ -109,6 +124,7 @@ module tb_sdram_gsu_shared;
     reg vram1_req=0,vram2_req=0,vram1_we=0,vram2_we=0;
     wire vram1_ack,vram2_ack;
     wire [7:0] vram1_dout,vram2_dout;
+    reg vram_pending=0;
     reg [22:1] rv_addr=0;
     reg [15:0] rv_din=0;
     reg [1:0] rv_ds=3;
@@ -117,41 +133,68 @@ module tb_sdram_gsu_shared;
     wire [15:0] rv_dout;
     wire refreshing,ready;
     wire [23:0] total_refresh;
-    sdram_snes_gsu #(.BSRAM_DONE_DELAY(DONE_DELAY)) dut(.*);
+    sdram_snes_gsu #(.BSRAM_DONE_DELAY(DONE_DELAY),.ROM_DONE_DELAY(ROM_DELAY)) dut(.*);
     gsu_test_sdram #(.ROW_BITS(ROW_BITS)) chip(
         .clk(~clk), .addr(SDRAM_A), .ba(SDRAM_BA), .dqm(SDRAM_DQM),
         .cs_n(SDRAM_nCS), .ras_n(SDRAM_nRAS), .cas_n(SDRAM_nCAS),
         .we_n(SDRAM_nWE), .dq(SDRAM_DQ));
-    integer normal_writes=0,delayed_writes=0,bs_reads=0,refreshes=0;
+
+    integer bs_reads=0,bs_writes=0,normal_aram_writes=0,delayed_aram_writes=0,refreshes=0;
     reg [7:0] command_cycle;
     always @(posedge clk) command_cycle=dut.cycle;
-    // Inspect actual SDRAM commands, independently of host completion signals.
+    // Verify pin commands and done timing independently of transfer tasks.
     always @(negedge clk) begin
         #1;
         if(ready && !SDRAM_nCS) begin
-            if({SDRAM_nRAS,SDRAM_nCAS,SDRAM_nWE}==3'b001) refreshes=refreshes+1;
-            if(SDRAM_BA==2 && {SDRAM_nRAS,SDRAM_nCAS,SDRAM_nWE}==3'b100) begin
-                if(dut.port[1]==2) begin
-                    if(command_cycle==8'h08) normal_writes=normal_writes+1;
-                    else if(command_cycle==8'h40) delayed_writes=delayed_writes+1;
-                    else $fatal(1,"BSRAM write in wrong slot %h",command_cycle);
-                    if(SDRAM_DQM !== ~dut.ds[1]) $fatal(1,"Wrong BSRAM byte masks");
+            case({SDRAM_nRAS,SDRAM_nCAS,SDRAM_nWE})
+            3'b001: refreshes=refreshes+1;
+            3'b100: begin
+                if(dut.port[0]==dut.PORT_BSRAM && SDRAM_BA==1) begin
+                    if(command_cycle!==8'h04 || SDRAM_DQM!==~dut.ds[0])
+                        $fatal(1,"BSRAM write slot/masks failed");
+                    bs_writes=bs_writes+1;
+                end
+                if(SDRAM_BA==2) begin
+                    if(command_cycle==8'h08) normal_aram_writes=normal_aram_writes+1;
+                    else if(command_cycle==8'h40) delayed_aram_writes=delayed_aram_writes+1;
+                    else $fatal(1,"ARAM write in wrong slot");
+                    if(SDRAM_DQM!==~dut.ds[1]) $fatal(1,"ARAM byte masks failed");
                 end
             end
-            if(SDRAM_BA==2 && {SDRAM_nRAS,SDRAM_nCAS,SDRAM_nWE}==3'b101 && dut.port[1]==2) begin
-                if(command_cycle!==8'h08) $fatal(1,"BSRAM read outside ARAM read slot");
+            3'b101: if(dut.port[0]==dut.PORT_BSRAM && SDRAM_BA==1) begin
+                if(command_cycle!==8'h04) $fatal(1,"BSRAM read in wrong slot");
                 bs_reads=bs_reads+1;
             end
+            default: ;
+            endcase
         end
     end
-    task tick; @(posedge clk); #2; endtask
+    reg checked_rom_done=0,checked_bs_done=0;
+    always @(negedge clk) begin
+        #2;
+        if(resetn && ready) begin
+            if(rom_done!==checked_rom_done) begin
+                if(dut.port[0]!==dut.PORT_ROM || !dut.oe_latch[0] ||
+                   command_cycle!==(ROM_DELAY ? 8'h80 : 8'h20))
+                    $fatal(1,"ROM done toggled for wrong port/cycle");
+            end
+            if(bsram_done!==checked_bs_done) begin
+                if(dut.port[0]!==dut.PORT_BSRAM ||
+                   command_cycle!==(dut.we_latch[0] ? 8'h04 : (DONE_DELAY ? 8'h80 : 8'h20)))
+                    $fatal(1,"BSRAM done toggled for wrong port/cycle");
+            end
+        end
+        checked_rom_done=rom_done; checked_bs_done=bsram_done;
+    end
+    task tick; @(posedge clk); #3; endtask
     task frame_start;
         begin
-            @(negedge clk); #2;
-            while(dut.cycle!==8'h01) begin @(negedge clk); #2; end
+            @(negedge clk); #3;
+            while(dut.cycle!==8'h01) begin @(negedge clk); #3; end
         end
     endtask
-    task bs_finish(input bit previous_done, input [15:0] result);
+    task settle; repeat(16) tick(); endtask
+    task bs_finish(input bit previous_done,input [15:0] result);
         integer n;
         begin
             n=0;
@@ -162,22 +205,53 @@ module tb_sdram_gsu_shared;
                 $fatal(1,"BSRAM read got %h expected %h",bsram_dout,result);
         end
     endtask
-    task bs_transfer(input bit wr, input [19:0] address, input [1:0] mask,
-                     input [15:0] value, input [15:0] result);
+    task rom_finish(input bit previous_done,input [15:0] result);
+        integer n;
+        begin
+            n=0;
+            while(rom_done===previous_done && n<400) begin tick(); n=n+1; end
+            if(rom_done===previous_done || rom_req_ack!==rom_req || rom_dout!==result)
+                $fatal(1,"ROM completion/ack/data failed: got %h expected %h",rom_dout,result);
+        end
+    endtask
+    task bs_transfer(input bit wr,input [19:0] address,input [1:0] mask,
+                     input [15:0] value,input [15:0] result);
         reg previous_done;
         begin
-            @(negedge clk); #2;
-            previous_done=bsram_done;
+            frame_start(); previous_done=bsram_done;
             bsram_addr=address; bsram_we=wr; bsram_ds=mask;
             bsram_din=value; bsram_req=~bsram_req;
             bs_finish(previous_done,result);
-            // Writes commit at the physical SDRAM edge after controller done.
-            @(negedge clk); #2;
-            if(wr && chip.get(bs_index(address))!==result)
-                $fatal(1,"BSRAM physical write got %h expected %h",chip.get(bs_index(address)),result);
+            @(negedge clk); #3;
+            if(wr && chip.get(bs_index(address))!==result) $fatal(1,"BSRAM physical write failed");
         end
     endtask
-    reg previous_done,old_ack,old_aram_ack;
+    task rom_transfer(input bit wr,input [22:0] address,input [1:0] mask,
+                      input [15:0] value,input [15:0] result);
+        reg previous_done;
+        begin
+            frame_start(); previous_done=rom_done;
+            rom_addr=address>>1; rom_we=wr; rom_ds=mask; rom_din=value; rom_req=~rom_req;
+            if(wr) begin
+                settle();
+                if(rom_req_ack!==rom_req || rom_done!==previous_done || chip.get(rom_index(address))!==result)
+                    $fatal(1,"ROM loader write/ack/mask failed");
+            end else rom_finish(previous_done,result);
+        end
+    endtask
+    task wr_transfer(input bit wr,input [16:0] address,input [7:0] value,input [15:0] result);
+        reg previous_done;
+        begin
+            frame_start(); previous_done=rom_done;
+            wram_addr=address; wram_we=wr; wram_din=value; wram_req=~wram_req;
+            settle();
+            if(wram_req_ack!==wram_req || rom_done!==previous_done)
+                $fatal(1,"WRAM ACK or isolated ROM done failed");
+            if(wr ? chip.get(wr_index(address))!==result : wram_dout!==result)
+                $fatal(1,"WRAM mapping/data/mask failed");
+        end
+    endtask
+    reg previous_done,previous_rom_done,old_ack,old_rom_ack;
     integer n,before_refresh;
     initial begin
         chip.put(bs_index(20'h01234),16'h1234);
@@ -185,101 +259,122 @@ module tb_sdram_gsu_shared;
         chip.put(bs_index(20'hffffe),16'hbabe);
         chip.put(ar_index(16'h1234),16'h4321);
         chip.put(ar_index(16'hfffe),16'habcd);
-        chip.put(24'(22'h2220>>1),16'h2468);
-        chip.put(24'(22'h4440>>1),16'h1357);
+        chip.put(rom_index(23'h2220),16'h2468);
+        chip.put(rom_index(23'h4440),16'h1357);
+        chip.put(rom_index(23'h400000),16'hface);
+        chip.put(rom_index(23'h5dfffe),16'hbeef);
+        chip.put(wr_index(17'h00000),16'h1234);
+        chip.put(wr_index(17'h1fffe),16'h5678);
+        chip.put(BANK_WORDS+24'(23'h200100>>1),16'h9876);
         repeat(4) tick();
-        @(negedge clk); #2; resetn=1;
+        @(negedge clk); #3; resetn=1;
         n=0; while(!ready && n<200) begin tick(); n=n+1; end
         if(!ready) $fatal(1,"Initialization timeout");
-        $display("GSU shared slot: bank size=%0d MiB done delay=%0d",1<<(ROW_BITS-10),DONE_DELAY);
+        // GSU traffic starts after the first periodic refresh, as on the board
+        // where loading the ROM precedes enabling the coprocessor.
+        n=0; while(refreshes==0 && n<1000) begin tick(); n=n+1; end
+        if(refreshes==0) $fatal(1,"Initial periodic refresh timeout");
+        settle();
+        $display("GSU SDRAM: bank=%0d MiB BSRAM delay=%0d ROM delay=%0d",1<<(ROW_BITS-10),DONE_DELAY,ROM_DELAY);
         bs_transfer(1,20'h01234,3,16'h5aa5,16'h5aa5);
         bs_transfer(1,20'h01234,2,16'hc300,16'hc3a5);
         bs_transfer(1,20'h01234,1,16'h0066,16'hc366);
         bs_transfer(0,20'h01234,3,0,16'hc366);
         bs_transfer(0,20'h00000,3,0,16'hdead);
         bs_transfer(0,20'hffffe,3,0,16'hbabe);
+        rom_transfer(0,23'h400000,3,0,16'hface);
+        rom_transfer(0,23'h5dfffe,3,0,16'hbeef);
+        rom_transfer(1,23'h2220,2,16'hc300,16'hc368);
+        rom_transfer(1,23'h2220,1,16'h0096,16'hc396);
+        rom_transfer(0,23'h2220,3,0,16'hc396);
+        wr_transfer(1,17'h00000,8'ha5,16'h12a5);
+        wr_transfer(1,17'h00001,8'h5a,16'h5aa5);
+        wr_transfer(0,17'h00000,0,16'h5aa5);
+        wr_transfer(1,17'h1ffff,8'h69,16'h6978);
+        wr_transfer(0,17'h1fffe,0,16'h6978);
 
-        // ARAM wins a simultaneous request; CPU reads proceed in channel 0.
-        frame_start(); previous_done=bsram_done; old_ack=bsram_req_ack;
-        aram_addr=16'h1234; aram_we=0; aram_req=~aram_req;
+        // All hosts can queue requests together. WRAM wins channel 0;
+        // ARAM proceeds independently, then ROM, then BSRAM.
+        frame_start(); previous_done=bsram_done; previous_rom_done=rom_done;
+        old_ack=bsram_req_ack; old_rom_ack=rom_req_ack;
+        wram_addr=0; wram_we=0; wram_req=~wram_req;
+        rom_addr=23'h4440>>1; rom_we=0; rom_req=~rom_req;
         bsram_addr=20'h01234; bsram_we=0; bsram_req=~bsram_req;
-        cpu_addr=22'h2220>>1; cpu_we=0; cpu_req=~cpu_req;
+        aram_addr=16'h1234; aram_we=0; aram_req=~aram_req;
         tick();
-        if(dut.port[1]!==1 || dut.port[0]!==1) $fatal(1,"ARAM priority/independent CPU slot failed");
-        n=0; while(aram_req_ack!==aram_req && n<30) begin
-            tick(); n=n+1;
-            if(bsram_req_ack!==old_ack) $fatal(1,"BSRAM accepted before priority ARAM");
-        end
-        if(aram_req_ack!==aram_req) $fatal(1,"ARAM acceptance timeout");
+        if(dut.port[0]!==dut.PORT_WRAM) $fatal(1,"WRAM priority reservation failed");
+        tick();
+        if(dut.port[1]!==dut.PORT_ARAM) $fatal(1,"Independent ARAM reservation failed");
+        repeat(5) tick();
+        if(wram_req_ack!==wram_req || wram_dout!==16'h5aa5 || aram_req_ack!==aram_req || aram_dout!==16'h4321 ||
+           rom_req_ack!==old_rom_ack || bsram_req_ack!==old_ack || rom_done!==previous_rom_done)
+            $fatal(1,"WRAM/ARAM data or pending ROM/BSRAM request lost");
+        rom_finish(previous_rom_done,16'h1357);
+        if(bsram_req_ack!==old_ack) $fatal(1,"BSRAM overtook ROM");
         bs_finish(previous_done,16'hc366);
-        if(aram_dout!==16'h4321 || cpu_port0!==16'h2468)
-            $fatal(1,"Shared reads contaminated ARAM/CPU data");
 
-        // Reserve a BSRAM write with CPU read, then introduce a late ARAM read.
-        // Its arrival must not change the delayed-write schedule already chosen.
-        frame_start(); previous_done=bsram_done; old_aram_ack=aram_req_ack;
-        bsram_addr=20'h01234; bsram_we=1; bsram_ds=3;
-        bsram_din=16'ha55a; bsram_req=~bsram_req;
-        cpu_addr=22'h4440>>1; cpu_req=~cpu_req;
-        tick();
-        if(dut.port[1]!==2 || !dut.write_delay) $fatal(1,"BSRAM delayed write not reserved");
-        @(negedge clk); #2;
-        aram_addr=16'hfffe; aram_req=~aram_req;
-        while(bsram_done===previous_done) begin
-            tick();
-            if(aram_req_ack!==old_aram_ack) $fatal(1,"Late ARAM changed reserved BSRAM operation");
-        end
-        @(negedge clk); #2;
-        if(chip.get(bs_index(20'h01234))!==16'ha55a) $fatal(1,"Delayed write data failed");
-        repeat(16) tick();
-        if(aram_req_ack!==aram_req || aram_dout!==16'habcd || cpu_port0!==16'h1357)
-            $fatal(1,"Late ARAM/CPU request lost");
-
-        // ARAM byte writes retain both masks, including the delayed schedule.
-        frame_start();
+        // ARAM WRITE is delayed by a channel-0 ROM READ. A request arriving
+        // after reservation must keep its own payload and wait for next frame.
+        frame_start(); previous_rom_done=rom_done;
+        rom_addr=23'h2220>>1; rom_req=~rom_req;
         aram_addr=16'h1234; aram_we=1; aram_din=8'h69; aram_req=~aram_req;
-        cpu_addr=22'h2220>>1; cpu_req=~cpu_req;
         tick();
-        if(dut.port[1]!==1 || !dut.write_delay) $fatal(1,"ARAM delayed write not reserved");
-        repeat(8) tick();
-        if(aram_req_ack!==aram_req || chip.get(ar_index(16'h1234))!==16'h4369)
-            $fatal(1,"ARAM low-byte delayed write failed");
-        frame_start();
-        aram_addr=16'h1235; aram_din=8'h96; aram_req=~aram_req;
-        tick();
-        if(dut.write_delay) $fatal(1,"ARAM normal write unexpectedly delayed");
-        repeat(8) tick();
+        if(!dut.write_delay) $fatal(1,"ARAM delayed write not selected");
+        repeat(3) tick();
+        if(dut.port[1]!==dut.PORT_ARAM) $fatal(1,"ARAM delayed write not reserved");
+        @(negedge clk); #3;
+        previous_done=bsram_done; bsram_we=1; bsram_ds=3; bsram_din=16'ha55a; bsram_req=~bsram_req;
+        rom_finish(previous_rom_done,16'hc396);
+        bs_finish(previous_done,0); settle();
+        if(aram_req_ack!==aram_req || chip.get(ar_index(16'h1234))!==16'h4369 ||
+           chip.get(bs_index(20'h01234))!==16'ha55a)
+            $fatal(1,"Delayed ARAM or late BSRAM write failed");
+        frame_start(); aram_addr=16'h1235; aram_din=8'h96; aram_req=~aram_req;
+        settle();
         if(aram_req_ack!==aram_req || chip.get(ar_index(16'h1234))!==16'h9669)
             $fatal(1,"ARAM high-byte normal write failed");
         aram_we=0;
 
-        // A delayed read completion must survive replacing port[1] next frame.
-        frame_start(); previous_done=bsram_done;
-        bsram_we=0; bsram_req=~bsram_req;
-        while(bsram_req_ack!==bsram_req) tick();
-        @(negedge clk); #2; aram_addr=16'h1234; aram_req=~aram_req;
-        bs_finish(previous_done,16'ha55a);
-        repeat(16) tick();
-        if(aram_dout!==16'h9669) $fatal(1,"ARAM read overwritten by BSRAM");
-
-        // Hard refresh blocks BSRAM while preserving priority ARAM service.
-        frame_start(); previous_done=bsram_done; old_ack=bsram_req_ack;
-        before_refresh=refreshes;
+        // Required refresh stalls GSU ROM and BSRAM, while ARAM still runs.
+        frame_start(); before_refresh=refreshes;
         force dut.need_refresh=1'b1;
-        bsram_req=~bsram_req; aram_req=~aram_req;
+        tick();
+        @(negedge clk); #3;
+        previous_done=bsram_done; previous_rom_done=rom_done;
+        old_ack=bsram_req_ack; old_rom_ack=rom_req_ack;
+        bsram_we=0; bsram_req=~bsram_req;
+        rom_gsu=1; rom_req=~rom_req;
+        aram_req=~aram_req;
         repeat(24) begin
             tick();
-            if(bsram_req_ack!==old_ack || bsram_done!==previous_done)
-                $fatal(1,"BSRAM bypassed need_refresh gate");
+            if(bsram_req_ack!==old_ack || bsram_done!==previous_done ||
+               rom_req_ack!==old_rom_ack || rom_done!==previous_rom_done)
+                $fatal(1,"GSU request bypassed refresh gate");
         end
-        if(aram_req_ack!==aram_req || refreshes==before_refresh)
-            $fatal(1,"ARAM priority or refresh progress failed");
+        if(aram_req_ack!==aram_req || aram_dout!==16'h9669 || refreshes==before_refresh)
+            $fatal(1,"Independent ARAM/refresh progress failed");
         release dut.need_refresh;
+        rom_finish(previous_rom_done,16'hc396);
         bs_finish(previous_done,16'ha55a);
-        if(normal_writes==0 || delayed_writes==0 || bs_reads==0)
-            $fatal(1,"Missing normal/delayed shared-slot command coverage");
-        $display("PASS: ARAM priority, bank-tail mapping, masks, CPU overlap, delayed writes, read done and refresh");
+
+        // Sustained GSU ROM reads must yield to a pending RV request.
+        frame_start(); rv_addr=22'h80; rv_req=~rv_req;
+        previous_rom_done=rom_done; rom_req=~rom_req;
+        n=0;
+        while(rv_req_ack!==rv_req && n<600) begin
+            tick(); n=n+1;
+            if(rom_done!==previous_rom_done && rom_req_ack===rom_req) begin
+                @(negedge clk); #3;
+                previous_rom_done=rom_done; rom_req=~rom_req;
+            end
+        end
+        if(rv_req_ack!==rv_req) $fatal(1,"GSU traffic starved RV");
+        settle();
+        if(rv_dout!==16'h9876) $fatal(1,"RV mapping/read data failed");
+        if(bs_reads==0 || bs_writes==0 || normal_aram_writes==0 || delayed_aram_writes==0)
+            $fatal(1,"Missing command schedule coverage");
+        $display("PASS: ROM/WRAM arbitration, maps, masks, ARAM schedules, done timing, refresh and RV fairness");
         $finish;
     end
-    initial begin #100000; $fatal(1,"Shared slot watchdog"); end
+    initial begin #100000; $fatal(1,"SDRAM regression watchdog"); end
 endmodule

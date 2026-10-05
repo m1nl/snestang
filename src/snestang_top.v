@@ -71,7 +71,7 @@ module snestang_top #(
     // SPI flash
     output flash_spi_cs_n,          // chip select
     input flash_spi_miso,           // master in slave out
-    output flash_spi_mosi,          // mster out slave in
+    output flash_spi_mosi,          // master out slave in
 `ifndef LATTICE
     output flash_spi_clk,           // spi clock
 `endif
@@ -129,18 +129,18 @@ module snestang_top #(
     output O_sdram_cas_n,           // columns address select
     output O_sdram_ras_n,           // row address select
     output O_sdram_wen_n,           // write enable
-    inout [SDRAM_DATA_WIDTH-1:0] IO_sdram_dq,       // 31 bit bidirectional data bus
-    output [SDRAM_ROW_WIDTH-1:0] O_sdram_addr,     // 11 bit multiplexed address bus
+    inout [SDRAM_DATA_WIDTH-1:0] IO_sdram_dq,       // bidirectional SDRAM data bus
+    output [SDRAM_ROW_WIDTH-1:0] O_sdram_addr,     // multiplexed SDRAM row/column address
     output [SDRAM_DATA_WIDTH/8-1:0] O_sdram_dqm,       //
     output [1:0] O_sdram_ba         // 4 banks
 );
 
 // Clock signals
-wire mclk /* synthesis syn_keep = 1 */;                      // SNES master clock at 21.5054Mhz (~21.477)
-wire fclk /* synthesis syn_keep = 1 */;                      // Fast clock for sdram for SDRAM
-wire fclk_p /* synthesis syn_keep = 1 */;                    // 180-degree shifted fclk
+wire mclk /* synthesis syn_keep = 1 */;                      // SNES master clock; frequency depends on board configuration
+wire fclk /* synthesis syn_keep = 1 */;                      // Fast clock for SDRAM
+wire fclk_p /* synthesis syn_keep = 1 */;                    // phase-shifted fast clock for the SDRAM pins
 wire clk27 /* synthesis syn_keep = 1 */;                     // 27Mhz for hdmi clock generation
-wire hclk5 /* synthesis syn_keep = 1 */;                     // 720p pixel clock at 74.25Mhz, and 5x high-speeid
+wire hclk5 /* synthesis syn_keep = 1 */;                     // HDMI serializer clock, 5x the 74.25 MHz pixel clock
 wire hclk /* synthesis syn_keep = 1 */;
 
 // Board-specific 60 MHz USB clock. Supply it from a PLL when USB HID is enabled.
@@ -495,7 +495,7 @@ main #(
 );
 `endif
 
-// SDRAM for SNES ROM, WRAM and ARAM
+// Independent ROM and WRAM requests share SDRAM channel 0 with BSRAM and RV.
 reg         rom_req;
 wire        rom_req_ack;
 reg  [22:0] rom_addr_sd;
@@ -508,8 +508,9 @@ reg         rom_gsu;
 reg         rom_done;
 reg         rom_done_r;
 
-wire        rom_rd = ~ROM_CE_N; // && ~ROM_OE_N;
-// ROM_OE_N fires too late for SDRAM transaction to finish
+// Start from CE so CPU reads have time to complete before sampling.
+// The GSU asserts CE only while its ROM state selects a valid fetch address.
+wire        rom_rd = ~ROM_CE_N;
 
 reg         wram_req;
 wire        wram_req_ack;
@@ -564,7 +565,7 @@ bsram_cache bsram_cache_inst (
 wire bsram_cache_busy = 1'b0;
 `endif
 
-// Leave it clear while the cache is busy so a held read can issue later.
+// Update the tracked address/write strobe only when the cache can accept a request.
 wire        bsram_write_request = ((bsram_wr && (BSRAM_ADDR != bsram_addr_sd)) || (bsram_wr && ~bsram_wr_r)) && !bsram_cache_busy;
 wire        bsram_read_request  =  (bsram_rd && (BSRAM_ADDR != bsram_addr_sd)) && !bsram_cache_busy;
 
@@ -583,6 +584,7 @@ assign WRAM_Q = WRAM_ADDR[0] ? wram_word[15:8] : wram_word[7:0];
 assign BSRAM_Q = bsram_dout;
 assign ARAM_Q = ARAM_ADDR[0] ? aram_word[15:8] : aram_word[7:0];
 
+// Hold completion high until the next ROM request snapshots the done toggle.
 assign ROM_DONE = (rom_done_r != rom_done);
 
 `ifdef BSRAM_BRAM
@@ -591,7 +593,9 @@ assign BSRAM_DONE = 1'b1;
 assign BSRAM_DONE = (bsram_done_r != bsram_done);
 `endif
 
-// Generate requests for the SDRAM ports.
+// Queue ROM/WRAM/ARAM when their own ACK matches req; BSRAM uses cache busy.
+// Read word tracking suppresses repeats until the address changes; adjacent
+// ROM bytes share one SDRAM read. Loader writes override a coincident ROM read.
 always @(posedge mclk) begin
     if (~resetn) begin
         wram_wr_r <= 0;
@@ -790,12 +794,12 @@ sdram_snes_gsu sdram(
     .wram_addr(wram_addr_sd), .wram_din(wram_din), .wram_dout(wram_word),
     .wram_req(wram_req), .wram_req_ack(wram_req_ack), .wram_we(wram_we),
 
-    // ROM accesses
+    // CPU/GSU ROM reads and cartridge loader writes
     .rom_addr(rom_addr_sd[22:1]), .rom_din(rom_din), .rom_dout(rom_word),
     .rom_req(rom_req), .rom_req_ack(rom_req_ack), .rom_we(rom_we), .rom_ds(rom_ds),
     .rom_done(rom_done), .rom_gsu(rom_gsu),
 
-    // BSRAM accesses
+    // BSRAM cache transfers (or disabled when BSRAM uses block RAM)
 `ifdef BSRAM_BRAM
     .bsram_addr(20'b0), .bsram_din(8'b0), .bsram_dout(),
     .bsram_req(1'b0), .bsram_req_ack(), .bsram_we(1'b0),
@@ -834,7 +838,7 @@ assign loader_do_ready = (rom_req == rom_req_ack);
 reg [7:0] loader_do_r;
 reg loading_r;
 
-// Parse 64-byte rom header into rom_type and etc
+// Decode the 64-byte cartridge header into mapper, ROM/RAM sizes, and address masks.
 smc_parser smc (
     .clk(mclk), .resetn(resetn & ~(loading & ~loading_r)),
     .rom_d(loader_do), .rom_strb(loader_do_valid),

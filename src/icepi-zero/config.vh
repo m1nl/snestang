@@ -5,13 +5,13 @@
 
 `define SDRAM_3CH
 // `define BSRAM_BRAM
-// `define BSRAM_CACHE
+`define BSRAM_CACHE
 `define CHIP_DSPn
-// `define CHIP_GSU
+`define CHIP_GSU
 
 // `define CONTROLLER_SNES
 // `define CONTROLLER_DS2
-`define CONTROLLER_MISTLE
+// `define CONTROLLER_MISTLE
 `define CONTROLLER_USB_HID
 
 `define SDRAM_DATA_WIDTH 16

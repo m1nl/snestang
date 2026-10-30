@@ -43,7 +43,7 @@ At a high level, the work since [`fbd8217`](https://github.com/m1nl/snestang/com
 
 ## Flashing IcePi-Zero
 
-First, get `firmware.bin` from the [SNESTang firmware repository](https://github.com/m1nl/snestang-firmware) and flash it at offset `0x500000`:
+First, get `firmware.bin` from the forked [SNESTang firmware repository](https://github.com/m1nl/snestang-firmware) and flash it at offset `0x500000`:
 
 ```sh
 openFPGALoader -b icepi-zero --write-flash --offset 0x500000 firmware.bin

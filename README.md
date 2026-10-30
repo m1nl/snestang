@@ -10,6 +10,14 @@ The USB HID controllers run in FPGA gateware; IcePi-Zero has no dedicated USB co
 
 On IcePi-Zero, the first player uses the second USB port, the one closer to the PCB edge, for easier physical access. The other USB port is for the second player.
 
+## GSU (Super FX) support
+
+Both [MiSTle GW5A-25](src/mistle_gw5a_25) and [IcePi-Zero](src/icepi-zero) support the GSU (Super FX) chip thanks to the cache implementation. All GSU games work except **DOOM**, which hangs randomly. The suspected cause is its need for predictable memory-access timing; this has not been confirmed.
+
+**Star Fox** and **Super Mario World 2: Yoshi's Island** both work—two standout titles that make GSU support worthwhile on their own.
+
+[IcePi-Zero XL](src/icepi-zero-xl) uses BRAM-backed memory for GSU instead of the cache-backed SDRAM path. **DOOM is expected to work there** with the more predictable memory timing.
+
 ## Controller buttons
 
 Controllers without dedicated Start and Select buttons can use these chords:

@@ -1,18 +1,18 @@
-# SnesTang for MiSTle
+# SNESTang / SNESPi
 
-This project is based on [nand2mario's SNESTang](https://github.com/nand2mario/snestang) and is a work in progress to bring it to the [MiSTle framework](https://github.com/MiSTle-Dev). It retains the improvements from nand2mario's project while adapting the core and its I/O system for MiSTle boards.
+This project is based on [SNESTang by nand2mario](https://github.com/nand2mario/snestang). The [IcePi-Zero](src/icepi-zero) variant is nicknamed **SNESPi** and provides in-FPGA USB 2.0 HID support using the [usb_hid_host core](https://github.com/m1nl/usb_hid_host).
 
-There is currently an [IcePi-Zero](src/icepi-zero) build with USB HID support. It also works with the [MiSTle IcePi carrier board](https://github.com/MiSTle-Dev/Boards/tree/main/icepi_carrier), which offers broader USB compatibility with IcePi-Zero. Other board configurations are present in the source tree, but the MiSTle port is still in progress.
+For a MiSTle-compatible build, follow the build guide in [MiSTle-Dev/snescore](https://github.com/MiSTle-Dev/snescore/).
 
 ### USB support
 
-The USB HID controllers run in FPGA gateware; IcePi-Zero has no dedicated USB controller chip for them. Some USB HID devices may therefore be incompatible. Each port supports one device, so USB hubs and composite devices such as combined keyboard/mouse units may not work. Low-speed and full-speed USB 2.0 HID devices are the intended devices. This limitation is also described in the [IcePi-Zero Minimig USB support notes](https://github.com/m1nl/icepi-zero-minimig/blob/main/README.md#usb-support).
+On IcePi-Zero boards, USB 2.0 HID support runs entirely in FPGA gateware through [usb_hid_host](https://github.com/m1nl/usb_hid_host), supporting low-speed and full-speed devices. See the [IcePi-Zero Minimig USB support notes](https://github.com/m1nl/icepi-zero-minimig#usb-support) for details about device compatibility and limitations.
 
 On IcePi-Zero, the first player uses the second USB port, the one closer to the PCB edge, for easier physical access. The other USB port is for the second player.
 
 ## GSU (Super FX) support
 
-Both [MiSTle GW5A-25](src/mistle_gw5a_25) and [IcePi-Zero](src/icepi-zero) support the GSU (Super FX) chip thanks to the cache implementation. All GSU games work except **DOOM**, which hangs randomly. The suspected cause is its need for predictable memory-access timing; this has not been confirmed.
+[MiSTle GW5A-25](src/mistle_gw5a_25) devboard and [IcePi-Zero](src/icepi-zero) support the GSU (Super FX) chip thanks to the cache implementation. All GSU games work except **DOOM**, which hangs randomly. The suspected cause is its need for predictable memory-access timing; this has not been confirmed.
 
 **Star Fox** and **Super Mario World 2: Yoshi's Island** both work—two standout titles that make GSU support worthwhile on their own.
 
@@ -43,7 +43,7 @@ At a high level, the work since [`fbd8217`](https://github.com/m1nl/snestang/com
 
 ## Flashing IcePi-Zero
 
-First, get `firmware.bin` from the [SnesTang firmware repository](https://github.com/m1nl/snestang-firmware) and flash it at offset `0x500000`:
+First, get `firmware.bin` from the [SNESTang firmware repository](https://github.com/m1nl/snestang-firmware) and flash it at offset `0x500000`:
 
 ```sh
 openFPGALoader -b icepi-zero --write-flash --offset 0x500000 firmware.bin

@@ -13,7 +13,7 @@
 
 `define CONTROLLER_SNES
 `define CONTROLLER_DS2
-// `define CONTROLLER_MISTLE
+`define CONTROLLER_MISTLE   // USB pad/keyboard from the onboard BL616 (FPGA-Companion over SPI)
 // `define CONTROLLER_USB_HID  // requires a board-specific 60 MHz uclk connection
 
 `define SDRAM_DATA_WIDTH 32

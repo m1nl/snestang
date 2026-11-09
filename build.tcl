@@ -31,6 +31,9 @@ if {$dev eq "nano20k"} {
     add_file -type verilog "src/nano20k/gowin_pll_hdmi.v"
     add_file -type verilog "src/nano20k/gowin_pll_snes.v"
     add_file -type verilog "src/nano20k/sdram_nano.v"
+    # FPGA-Companion (onboard BL616 over SPI), see CONTROLLER_MISTLE in src/nano20k/config.vh
+    add_file -type verilog "src/mistle/mcu_spi.v"
+    add_file -type verilog "src/mistle/hid.v"
     # nano20k supports both controllers simultaneously
     set_option -output_base_name snestang_${dev}
 } elseif {$dev eq "primer25k"} {

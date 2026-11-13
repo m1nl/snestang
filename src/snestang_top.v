@@ -123,7 +123,9 @@ module snestang_top #(
     input mcu_clk,
     input mcu_ss,
     output mcu_intn,
-    input mcu_spare,
+`ifndef NANO
+    input mcu_spare,    // unused; no free pin on the Nano 20K
+`endif
 `endif
 
 `ifdef LATTICE

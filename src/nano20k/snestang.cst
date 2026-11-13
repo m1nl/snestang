@@ -6,8 +6,23 @@ IO_PORT "s0" IO_TYPE=LVCMOS33 PULL_MODE=DOWN;
 // UART
 IO_LOC "UART_RXD" 70;
 IO_PORT "UART_RXD" IO_TYPE=LVCMOS33 PULL_MODE=UP BANK_VCCIO=3.3;
-IO_LOC "UART_TXD" 69;
+// Pin 69 is the companion IRQ line (mcu_intn) on this build, so the debug UART TX
+// moves to header pin 48 (same pin NanoMig's debug build uses; read it with the RP2040 probe).
+IO_LOC "UART_TXD" 48;
 IO_PORT "UART_TXD" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8 BANK_VCCIO=3.3;
+
+// FPGA-Companion on the onboard BL616 (same pins as NanoMig's spi_* ports).
+// The SPI data-out line to the BL616 is on spi_dir (75), IRQ on 69.
+IO_LOC "mcu_ss" 86;
+IO_PORT "mcu_ss" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "mcu_clk" 13;
+IO_PORT "mcu_clk" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "mcu_din" 76;
+IO_PORT "mcu_din" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "mcu_dout" 75;
+IO_PORT "mcu_dout" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
+IO_LOC "mcu_intn" 69;
+IO_PORT "mcu_intn" IO_TYPE=LVCMOS33 PULL_MODE=NONE DRIVE=8;
 
 // HDMI TX
 IO_LOC "tmds_d_p[0]" 35,36;
